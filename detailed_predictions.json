@@ -1,0 +1,355 @@
+[
+    {
+        "date": "2025-05-20",
+        "session": "morning",
+        "timestamp": "2025-05-20 09:33:24",
+        "market_data": {
+            "btc_price": 105584.0,
+            "eth_price": 2539.83,
+            "btc_rsi": 74.81138022551949,
+            "eth_rsi": 77.41791395065371,
+            "fear_greed": 71
+        },
+        "predictions": {
+            "btc_prediction": {
+                "direction": "BULLISH",
+                "primary_trade_setup": "Long position with a target of $110,000",
+                "entry_price_range": "$105500 - $105700",
+                "take_profit_targets": "TP1: $110,000 (4.5%), TP2: $115,000 (9.1%)",
+                "stop_loss": "$104,500 (1%)",
+                "timeframe": "2-3 days",
+                "confidence_score": "8/10",
+                "key_support_levels": "$105,000, $104,000, $103,000",
+                "key_resistance_levels": "$107,000, $108,000, $110,000"
+            },
+            "eth_prediction": {
+                "direction": "BULLISH",
+                "primary_trade_setup": "Long position with a target of $2700",
+                "entry_price_range": "$2530 - $2545",
+                "take_profit_targets": "TP1: $2700 (6.2%), TP2: $2800 (10.2%)",
+                "stop_loss": "$2500 (1.5%)",
+                "timeframe": "2-3 days",
+                "confidence_score": "7/10",
+                "key_support_levels": "$2520, $2500, $2480",
+                "key_resistance_levels": "$2600, $2650, $2700"
+            }
+        },
+        "validation_points": [
+            {
+                "coin": "ETH",
+                "type": "ENTRY_POINT_HIT",
+                "predicted_range": [
+                    2530.0,
+                    2545.0
+                ],
+                "actual_price": 2536.76,
+                "timestamp": "2025-05-20 09:42:20"
+            }
+        ],
+        "final_accuracy": null
+    },
+    {
+        "date": "2025-05-20",
+        "session": "morning",
+        "timestamp": "2025-05-20 09:41:26",
+        "market_data": {
+            "btc_price": 105469.0,
+            "eth_price": 2537.16,
+            "btc_rsi": 73.45155363668636,
+            "eth_rsi": 77.2489436028862,
+            "fear_greed": 71
+        },
+        "predictions": {
+            "btc_prediction": {
+                "direction": "BULLISH",
+                "primary_trade_setup": "Long position with a pullback entry",
+                "entry_price_range": "$104,500 - $105,000",
+                "take_profit_targets": "TP1: $107,000 (1.4%), TP2: $108,500 (3.4%)",
+                "stop_loss": "$103,500 (2%)",
+                "timeframe": "2-3 days",
+                "confidence_score": "8/10",
+                "key_support_levels": "$104,000, $103,000, $102,000",
+                "key_resistance_levels": "$106,000, $107,000, $108,000"
+            },
+            "eth_prediction": {
+                "direction": "BULLISH",
+                "primary_trade_setup": "Long position on breakout above resistance",
+                "entry_price_range": "$2550 - $2570",
+                "take_profit_targets": "TP1: $2600 (2.2%), TP2: $2650 (4.5%)",
+                "stop_loss": "$2520 (1%)",
+                "timeframe": "1-2 days",
+                "confidence_score": "7/10",
+                "key_support_levels": "$2500, $2450, $2400",
+                "key_resistance_levels": "$2570, $2600, $2650"
+            }
+        },
+        "validation_points": [],
+        "final_accuracy": null
+    },
+    {
+        "date": "2025-05-20",
+        "session": "morning",
+        "timestamp": "2025-05-20 12:58:09",
+        "market_data": {
+            "btc_price": 105137.0,
+            "eth_price": 2515.39,
+            "btc_rsi": 72.72864921977492,
+            "eth_rsi": 76.50192880474734,
+            "fear_greed": 71
+        },
+        "predictions": {
+            "btc_prediction": {
+                "direction": "BULLISH",
+                "primary_trade_setup": "Long position with a specific entry and exit recommendation",
+                "entry_price_range": "$104,800 - $105,000",
+                "take_profit_targets": "TP1: $106,000 (0.85%), TP2: $107,000 (1.90%)",
+                "stop_loss": "$104,500 (0.47%)",
+                "timeframe": "24-48 hours",
+                "confidence_score": "8/10",
+                "key_support_levels": "$104,500, $104,000, $103,500",
+                "key_resistance_levels": "$105,500, $106,000, $107,000"
+            },
+            "eth_prediction": {
+                "direction": "BULLISH",
+                "primary_trade_setup": "Long position with a specific entry and exit recommendation",
+                "entry_price_range": "$2500 - $2510",
+                "take_profit_targets": "TP1: $2550 (1.98%), TP2: $2600 (3.27%)",
+                "stop_loss": "$2480 (1.38%)",
+                "timeframe": "24-48 hours",
+                "confidence_score": "7/10",
+                "key_support_levels": "$2500, $2480, $2450",
+                "key_resistance_levels": "$2530, $2550, $2600"
+            }
+        },
+        "validation_points": [],
+        "final_accuracy": null
+    },
+    {
+        "date": "2025-05-20",
+        "session": "morning",
+        "timestamp": "2025-05-20 13:43:13",
+        "market_data": {
+            "btc_price": 105241.0,
+            "eth_price": 2512.8,
+            "btc_rsi": 73.78134272757904,
+            "eth_rsi": 76.64482426101547,
+            "fear_greed": 71
+        },
+        "predictions": {
+            "btc_prediction": {
+                "direction": "BULLISH",
+                "primary_trade_setup": "Long position with specific entry and exit points",
+                "entry_price_range": "$104,800 - $105,000",
+                "take_profit_targets": "TP1: $106,500 (1.25%), TP2: $107,500 (2.38%)",
+                "stop_loss": "$104,500 (0.67%)",
+                "timeframe": "24-48 hours",
+                "confidence_score": "8/10",
+                "key_support_levels": "$104,000, $103,500, $103,000",
+                "key_resistance_levels": "$106,000, $107,000, $108,000"
+            },
+            "eth_prediction": {
+                "direction": "BULLISH",
+                "primary_trade_setup": "Long position with specific entry and exit points",
+                "entry_price_range": "$2500 - $2510",
+                "take_profit_targets": "TP1: $2550 (1.98%), TP2: $2600 (3.44%)",
+                "stop_loss": "$2480 (1.57%)",
+                "timeframe": "24-48 hours",
+                "confidence_score": "7/10",
+                "key_support_levels": "$2500, $2480, $2450",
+                "key_resistance_levels": "$2550, $2600, $2650"
+            }
+        },
+        "validation_points": [],
+        "final_accuracy": null
+    },
+    {
+        "date": "2025-05-20",
+        "session": "morning",
+        "timestamp": "2025-05-20 13:51:50",
+        "market_data": {
+            "btc_price": 105312.0,
+            "eth_price": 2514.46,
+            "btc_rsi": 73.42770330811916,
+            "eth_rsi": 76.25285168230369,
+            "fear_greed": 71
+        },
+        "predictions": {
+            "btc_prediction": {
+                "direction": "BULLISH",
+                "primary_trade_setup": "Long position with a specific entry and exit recommendation",
+                "entry_price_range": "$104,500 - $105,000",
+                "take_profit_targets": "TP1: $107,000 (2%), TP2: $108,500 (4%)",
+                "stop_loss": "$103,500 (2%)",
+                "timeframe": "24-48 hours",
+                "confidence_score": "8/10",
+                "key_support_levels": "$104,000, $103,000, $102,000",
+                "key_resistance_levels": "$106,000, $107,000, $108,000"
+            },
+            "eth_prediction": {
+                "direction": "BULLISH",
+                "primary_trade_setup": "Long position with a specific entry and exit recommendation",
+                "entry_price_range": "$2500 - $2510",
+                "take_profit_targets": "TP1: $2550 (2%), TP2: $2580 (3%)",
+                "stop_loss": "$2480 (2%)",
+                "timeframe": "24-48 hours",
+                "confidence_score": "7/10",
+                "key_support_levels": "$2500, $2480, $2450",
+                "key_resistance_levels": "$2530, $2560, $2600"
+            }
+        },
+        "validation_points": [],
+        "final_accuracy": null
+    },
+    {
+        "date": "2025-05-20",
+        "session": "evening",
+        "timestamp": "2025-05-20 16:12:42",
+        "market_data": {
+            "btc_price": 104468.0,
+            "eth_price": 2478.39,
+            "btc_rsi": 70.69701532384084,
+            "eth_rsi": 74.41082156942242,
+            "fear_greed": 71
+        },
+        "predictions": {
+            "btc_prediction": {
+                "direction": "BULLISH",
+                "primary_trade_setup": "Long position with a breakout above $105000",
+                "entry_price_range": "$105000 - $105200",
+                "take_profit_targets": "TP1: $106000 (1%), TP2: $107000 (2%)",
+                "stop_loss": "$104500 (1%)",
+                "timeframe": "Intraday",
+                "confidence_score": "8/10",
+                "key_support_levels": "$104000, $103500, $103000",
+                "key_resistance_levels": "$105500, $106000, $107000"
+            },
+            "eth_prediction": {
+                "direction": "BULLISH",
+                "primary_trade_setup": "Long position with a breakout above $2500",
+                "entry_price_range": "$2500 - $2510",
+                "take_profit_targets": "TP1: $2550 (2%), TP2: $2600 (4%)",
+                "stop_loss": "$2480 (1%)",
+                "timeframe": "Intraday",
+                "confidence_score": "7/10",
+                "key_support_levels": "$2450, $2420, $2400",
+                "key_resistance_levels": "$2510, $2550, $2600"
+            }
+        },
+        "validation_points": [],
+        "final_accuracy": null
+    },
+    {
+        "date": "2025-05-20",
+        "session": "evening",
+        "timestamp": "2025-05-20 16:16:28",
+        "market_data": {
+            "btc_price": 104539.0,
+            "eth_price": 2478.43,
+            "btc_rsi": 70.92572453419531,
+            "eth_rsi": 74.19914438188206,
+            "fear_greed": 71
+        },
+        "predictions": {
+            "btc_prediction": {
+                "direction": "BULLISH",
+                "primary_trade_setup": "Long position with a pullback entry",
+                "entry_price_range": "$103,500 - $104,000",
+                "take_profit_targets": "TP1: $106,000 (1.43%), TP2: $107,500 (3.56%)",
+                "stop_loss": "$102,500 (2.00%)",
+                "timeframe": "24-48 hours",
+                "confidence_score": "8/10",
+                "key_support_levels": "$103,000, $102,000, $101,000",
+                "key_resistance_levels": "$105,000, $106,000, $107,000"
+            },
+            "eth_prediction": {
+                "direction": "BULLISH",
+                "primary_trade_setup": "Long position on breakout above resistance",
+                "entry_price_range": "$2500 - $2520",
+                "take_profit_targets": "TP1: $2550 (2.77%), TP2: $2600 (4.85%)",
+                "stop_loss": "$2470 (0.32%)",
+                "timeframe": "24-48 hours",
+                "confidence_score": "7/10",
+                "key_support_levels": "$2450, $2420, $2400",
+                "key_resistance_levels": "$2520, $2550, $2600"
+            }
+        },
+        "validation_points": [],
+        "final_accuracy": null
+    },
+    {
+        "date": "2025-05-20",
+        "session": "evening",
+        "timestamp": "2025-05-20 16:20:04",
+        "market_data": {
+            "btc_price": 104573.0,
+            "eth_price": 2476.99,
+            "btc_rsi": 71.6306409520259,
+            "eth_rsi": 74.44923848508314,
+            "fear_greed": 71
+        },
+        "predictions": {
+            "btc_prediction": {
+                "direction": "BULLISH",
+                "primary_trade_setup": "Long position with a breakout above key resistance levels",
+                "entry_price_range": "$105000 - $105200",
+                "take_profit_targets": "TP1: $106000 (1%), TP2: $107000 (2%)",
+                "stop_loss": "$104500 (1%)",
+                "timeframe": "24-48 hours",
+                "confidence_score": "8/10",
+                "key_support_levels": "$104000, $103500, $103000",
+                "key_resistance_levels": "$105500, $106000, $107000"
+            },
+            "eth_prediction": {
+                "direction": "BULLISH",
+                "primary_trade_setup": "Long position with a breakout above key resistance levels",
+                "entry_price_range": "$2500 - $2510",
+                "take_profit_targets": "TP1: $2550 (2%), TP2: $2600 (4%)",
+                "stop_loss": "$2480 (1%)",
+                "timeframe": "24-48 hours",
+                "confidence_score": "7/10",
+                "key_support_levels": "$2450, $2420, $2400",
+                "key_resistance_levels": "$2500, $2550, $2600"
+            }
+        },
+        "validation_points": [],
+        "final_accuracy": null
+    },
+    {
+        "date": "2025-05-20",
+        "session": "evening",
+        "timestamp": "2025-05-20 16:22:19",
+        "market_data": {
+            "btc_price": 104624.0,
+            "eth_price": 2477.35,
+            "btc_rsi": 72.14280976659008,
+            "eth_rsi": 74.74306193170038,
+            "fear_greed": 71
+        },
+        "predictions": {
+            "btc_prediction": {
+                "direction": "BULLISH",
+                "primary_trade_setup": "Long position",
+                "entry_price_range": "$104800 - $105000",
+                "take_profit_targets": "TP1: $106000 (1%), TP2: $107000 (2%)",
+                "stop_loss": "$104000 (1%)",
+                "timeframe": "24-48 hours",
+                "confidence_score": "8/10",
+                "key_support_levels": "$104000, $103500, $103000",
+                "key_resistance_levels": "$105500, $106000, $107000"
+            },
+            "eth_prediction": {
+                "direction": "BULLISH",
+                "primary_trade_setup": "Long position",
+                "entry_price_range": "$2480 - $2490",
+                "take_profit_targets": "TP1: $2520 (1%), TP2: $2550 (2%)",
+                "stop_loss": "$2460 (1%)",
+                "timeframe": "24-48 hours",
+                "confidence_score": "7/10",
+                "key_support_levels": "$2460, $2450, $2440",
+                "key_resistance_levels": "$2490, $2520, $2550"
+            }
+        },
+        "validation_points": [],
+        "final_accuracy": null
+    }
+]
