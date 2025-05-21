@@ -1480,7 +1480,7 @@ DATA FOR ANALYSIS:
                         print("[INFO] Enhanced Telegram market analysis sent")
                     except Exception as e:
                         print(f"[ERROR] Failed to send Telegram notification: {e}")
-                    
+
                     # Parse the AI response to extract structured prediction data
                     try:
                         # Extract prediction sections
@@ -1522,16 +1522,22 @@ DATA FOR ANALYSIS:
                                 print("[INFO] Structured prediction data saved successfully")
                             else:
                                 print("[WARN] Could not save structured prediction - missing current data")
-                                
+                            
                             # Also save in original format
                             if current_data:
                                 save_prediction(ai_analysis, current_data)
+                        
+                    except Exception as e:
+                        print(f"[ERROR] Failed to parse structured prediction: {e}")
+                        # Only try to save in original format if we have current_data
+                        if current_data:
+                            save_prediction(ai_analysis, current_data)
                             
-                        except Exception as e:
-                            print(f"[ERROR] Failed to parse structured prediction: {e}")
-                            # Only try to save in original format if we have current_data
-                            if current_data:
-                                save_prediction(ai_analysis, current_data)
+                    except Exception as e:
+                        print(f"[ERROR] Failed to parse structured prediction: {e}")
+                        # Only try to save in original format if we have current_data
+                        if current_data:
+                            save_prediction(ai_analysis, current_data)
                     
         except Exception as e:
             print(f"\n[ERROR] Failed to generate AI insights: {e}")
