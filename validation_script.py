@@ -8,8 +8,78 @@ import time
 import os
 import re
 
+def load_telegram_config():
+    """Load Telegram configuration from environment variables or config file"""
+    # Try environment variables first
+    bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+    
+    if bot_token and chat_id:
+        print("[INFO] Using Telegram credentials from environment variables")
+        return {
+            "bot_token": bot_token,
+            "chat_id": chat_id,
+            "enabled": True
+        }
+    
+    # Fall back to config file
+    config_file = "telegram_config.json"
+    if os.path.exists(config_file):
+        try:
+            with open(config_file, "r") as f:
+                config = json.load(f)
+            if config.get("enabled") and config.get("bot_token") != "YOUR_BOT_TOKEN":
+                print("[INFO] Using Telegram credentials from config file")
+                return config
+        except Exception as e:
+            print(f"[ERROR] Loading telegram config: {e}")
+    
+    print("[WARN] Telegram notifications not configured - will not send alerts")
+    return {"enabled": False, "bot_token": "", "chat_id": ""}
+
+def send_telegram_message(message, disable_web_page_preview=True):
+    """Send a message to Telegram"""
+    config = load_telegram_config()
+    if not config["enabled"]:
+        print("[INFO] Telegram notifications not enabled")
+        return False
+    
+    try:
+        url = f"https://api.telegram.org/bot{config['bot_token']}/sendMessage"
+        payload = {
+            "chat_id": config["chat_id"],
+            "text": message,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": disable_web_page_preview
+        }
+        response = requests.post(url, data=payload)
+        response.raise_for_status()
+        print("[INFO] Telegram message sent successfully")
+        return True
+    except Exception as e:
+        print(f"[ERROR] Failed to send Telegram message: {e}")
+        return False
+
+def is_duplicate_validation_point(validation_points, new_point):
+    """Check if a validation point is already in the list"""
+    for point in validation_points:
+        if (point["coin"] == new_point["coin"] and 
+            point["type"] == new_point["type"]):
+            # For entry points, check if ranges overlap
+            if "ENTRY_POINT_HIT" in point["type"]:
+                return True
+            # For take profit targets, check if level is the same
+            elif "TP" in point["type"] and "predicted_level" in point and "predicted_level" in new_point:
+                if point["predicted_level"] == new_point["predicted_level"]:
+                    return True
+            # For stop loss, always consider it duplicate if type matches
+            elif "STOP_LOSS_HIT" in point["type"]:
+                return True
+    return False
+
 def validate_predictions():
     """Check if price has hit predicted levels and update prediction file"""
+    print("[DEBUG] Starting validation with Telegram enabled:", os.environ.get("TELEGRAM_BOT_TOKEN") is not None)
     prediction_file = "detailed_predictions.json"
     
     if not os.path.exists(prediction_file):
@@ -36,7 +106,8 @@ def validate_predictions():
         print(f"[ERROR] Failed to load predictions: {e}")
         return
     
-    # Validate open predictions
+    # Prepare for Telegram notifications
+    validation_messages = []
     updated = False
     now = datetime.now()
     
@@ -96,6 +167,8 @@ def validate_predictions():
             if entry_range and len(entry_range) == 2:
                 min_range = min(entry_range)
                 max_range = max(entry_range)
+                print(f"[DEBUG] Checking BTC entry point: ${min_range} - ${max_range} against current: ${btc_price}")
+                
                 if min_range <= btc_price <= max_range:
                     validation_point = {
                         "coin": "BTC",
@@ -104,9 +177,16 @@ def validate_predictions():
                         "actual_price": btc_price,
                         "timestamp": now.strftime("%Y-%m-%d %H:%M:%S")
                     }
-                    prediction["validation_points"].append(validation_point)
-                    updated = True
-                    print(f"[INFO] BTC entry point hit: ${btc_price}")
+                    
+                    # Check for duplicate before adding
+                    if not is_duplicate_validation_point(prediction.get("validation_points", []), validation_point):
+                        prediction["validation_points"].append(validation_point)
+                        updated = True
+                        print(f"[INFO] BTC entry point hit: ${btc_price}")
+                        
+                        # Add to Telegram notification
+                        validation_msg = f"🎯 <b>BTC ENTRY POINT HIT</b>\nPrice: ${btc_price:,.2f}\nTarget Range: ${min_range:,.2f} - ${max_range:,.2f}"
+                        validation_messages.append(validation_msg)
             
             # Get direction
             direction = btc_pred.get("direction", "").upper() if btc_pred.get("direction") else ""
@@ -124,9 +204,16 @@ def validate_predictions():
                         "actual_price": btc_price,
                         "timestamp": now.strftime("%Y-%m-%d %H:%M:%S")
                     }
-                    prediction["validation_points"].append(validation_point)
-                    updated = True
-                    print(f"[INFO] BTC TP{idx+1} hit: ${btc_price}")
+                    
+                    # Check for duplicate before adding
+                    if not is_duplicate_validation_point(prediction.get("validation_points", []), validation_point):
+                        prediction["validation_points"].append(validation_point)
+                        updated = True
+                        print(f"[INFO] BTC TP{idx+1} hit: ${btc_price}")
+                        
+                        # Add to Telegram notification
+                        validation_msg = f"🎯 <b>BTC TP{idx+1} HIT</b>\nPrice: ${btc_price:,.2f}\nTarget: ${tp:,.2f}\nDirection: {direction}"
+                        validation_messages.append(validation_msg)
             
             # Check stop loss
             if sl_level:
@@ -141,9 +228,16 @@ def validate_predictions():
                         "actual_price": btc_price,
                         "timestamp": now.strftime("%Y-%m-%d %H:%M:%S")
                     }
-                    prediction["validation_points"].append(validation_point)
-                    updated = True
-                    print(f"[INFO] BTC stop loss hit: ${btc_price}")
+                    
+                    # Check for duplicate before adding
+                    if not is_duplicate_validation_point(prediction.get("validation_points", []), validation_point):
+                        prediction["validation_points"].append(validation_point)
+                        updated = True
+                        print(f"[INFO] BTC stop loss hit: ${btc_price}")
+                        
+                        # Add to Telegram notification
+                        validation_msg = f"⚠️ <b>BTC STOP LOSS HIT</b>\nPrice: ${btc_price:,.2f}\nStop Level: ${sl_level:,.2f}\nDirection: {direction}"
+                        validation_messages.append(validation_msg)
         
         # Check if we should validate ETH prediction - very similar to BTC validation
         if "predictions" in prediction and "eth_prediction" in prediction["predictions"]:
@@ -187,6 +281,8 @@ def validate_predictions():
             if entry_range and len(entry_range) == 2:
                 min_range = min(entry_range)
                 max_range = max(entry_range)
+                print(f"[DEBUG] Checking ETH entry point: ${min_range} - ${max_range} against current: ${eth_price}")
+                
                 if min_range <= eth_price <= max_range:
                     validation_point = {
                         "coin": "ETH",
@@ -195,9 +291,16 @@ def validate_predictions():
                         "actual_price": eth_price,
                         "timestamp": now.strftime("%Y-%m-%d %H:%M:%S")
                     }
-                    prediction["validation_points"].append(validation_point)
-                    updated = True
-                    print(f"[INFO] ETH entry point hit: ${eth_price}")
+                    
+                    # Check for duplicate before adding
+                    if not is_duplicate_validation_point(prediction.get("validation_points", []), validation_point):
+                        prediction["validation_points"].append(validation_point)
+                        updated = True
+                        print(f"[INFO] ETH entry point hit: ${eth_price}")
+                        
+                        # Add to Telegram notification
+                        validation_msg = f"🎯 <b>ETH ENTRY POINT HIT</b>\nPrice: ${eth_price:,.2f}\nTarget Range: ${min_range:,.2f} - ${max_range:,.2f}"
+                        validation_messages.append(validation_msg)
             
             # Get direction
             direction = eth_pred.get("direction", "").upper() if eth_pred.get("direction") else ""
@@ -213,9 +316,16 @@ def validate_predictions():
                         "actual_price": eth_price,
                         "timestamp": now.strftime("%Y-%m-%d %H:%M:%S")
                     }
-                    prediction["validation_points"].append(validation_point)
-                    updated = True
-                    print(f"[INFO] ETH TP{idx+1} hit: ${eth_price}")
+                    
+                    # Check for duplicate before adding
+                    if not is_duplicate_validation_point(prediction.get("validation_points", []), validation_point):
+                        prediction["validation_points"].append(validation_point)
+                        updated = True
+                        print(f"[INFO] ETH TP{idx+1} hit: ${eth_price}")
+                        
+                        # Add to Telegram notification
+                        validation_msg = f"🎯 <b>ETH TP{idx+1} HIT</b>\nPrice: ${eth_price:,.2f}\nTarget: ${tp:,.2f}\nDirection: {direction}"
+                        validation_messages.append(validation_msg)
             
             # Check stop loss
             if sl_level:
@@ -228,9 +338,16 @@ def validate_predictions():
                         "actual_price": eth_price,
                         "timestamp": now.strftime("%Y-%m-%d %H:%M:%S")
                     }
-                    prediction["validation_points"].append(validation_point)
-                    updated = True
-                    print(f"[INFO] ETH stop loss hit: ${eth_price}")
+                    
+                    # Check for duplicate before adding
+                    if not is_duplicate_validation_point(prediction.get("validation_points", []), validation_point):
+                        prediction["validation_points"].append(validation_point)
+                        updated = True
+                        print(f"[INFO] ETH stop loss hit: ${eth_price}")
+                        
+                        # Add to Telegram notification
+                        validation_msg = f"⚠️ <b>ETH STOP LOSS HIT</b>\nPrice: ${eth_price:,.2f}\nStop Level: ${sl_level:,.2f}\nDirection: {direction}"
+                        validation_messages.append(validation_msg)
         
         # Check if prediction timeframe has expired and calculate final accuracy
         # This examines the "timeframe" field to determine when a prediction expires
@@ -262,6 +379,10 @@ def validate_predictions():
                                     prediction["final_accuracy"] = accuracy
                                     updated = True
                                     print(f"[INFO] {coin} prediction from {pred_time} has expired. Final accuracy: {accuracy:.2f}%")
+                                    
+                                    # Add to Telegram notification
+                                    validation_msg = f"📊 <b>{coin} PREDICTION COMPLETED</b>\nTimeframe: {timeframe_str}\nAccuracy: {accuracy:.2f}%\nOriginal Prediction: {pred_time.strftime('%Y-%m-%d %H:%M')}"
+                                    validation_messages.append(validation_msg)
                         except Exception as e:
                             print(f"[ERROR] Failed to parse timeframe for {coin}: {e}")
     
@@ -271,6 +392,12 @@ def validate_predictions():
             with open(prediction_file, "w") as f:
                 json.dump(predictions, f, indent=4)
             print("[INFO] Prediction file updated")
+            
+            # Send Telegram notifications if any validation points were recorded
+            if validation_messages:
+                message = "🚨 <b>PREDICTION TARGETS HIT</b>\n\n" + "\n\n".join(validation_messages)
+                result = send_telegram_message(message)
+                print(f"[INFO] Telegram notification result: {result}")
         except Exception as e:
             print(f"[ERROR] Failed to save updated predictions: {e}")
 
