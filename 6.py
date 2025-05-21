@@ -91,7 +91,11 @@ def resilient_request(url, params=None, max_retries=None, timeout=None):
 # 3.1 Macroeconomic Data
 # ----------------------------
 def get_m2_money_supply():
-    fred_key = config["api_keys"]["fred"]
+    # First check for environment variable, then fallback to config file
+    fred_key = os.environ.get("FRED_API_KEY")
+    if not fred_key:
+        fred_key = config["api_keys"]["fred"]
+    
     if not fred_key or fred_key == "YOUR_FRED_API_KEY":
         print("[WARN] FRED API key not configured - using alternative source for M2 data")
         return get_m2_money_supply_alternative()
@@ -148,7 +152,11 @@ def get_m2_money_supply_alternative():
 
 def get_inflation_data():
     try:
-        alpha_key = config["api_keys"]["alphavantage"]
+        # First check for environment variable, then fallback to config file
+        alpha_key = os.environ.get("ALPHAVANTAGE_API_KEY") 
+        if not alpha_key:
+            alpha_key = config["api_keys"]["alphavantage"]
+            
         if not alpha_key or alpha_key == "YOUR_ALPHAVANTAGE_API_KEY":
             print("[WARN] AlphaVantage API key not configured - using alternative inflation source")
             return get_inflation_alternative()
@@ -226,7 +234,11 @@ def get_inflation_alternative():
 
 def get_interest_rates():
     try:
-        alpha_key = config["api_keys"]["alphavantage"]
+        # First check for environment variable, then fallback to config file
+        alpha_key = os.environ.get("ALPHAVANTAGE_API_KEY")
+        if not alpha_key:
+            alpha_key = config["api_keys"]["alphavantage"]
+            
         if alpha_key and alpha_key != "YOUR_ALPHAVANTAGE_API_KEY":
             url = "https://www.alphavantage.co/query"
             params = {
