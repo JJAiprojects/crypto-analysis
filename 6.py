@@ -1070,11 +1070,16 @@ def get_prediction_accuracy():
 # 6. GPT Market Insight
 # ----------------------------
 def ask_ai(prompt):
-    if not config["api_keys"]["openai"] or config["api_keys"]["openai"] == "YOUR_OPENAI_API_KEY":
-        return "AI summary unavailable. Please add your OpenAI API key to config.json."
+    # First check for environment variable, then fallback to config file
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        api_key = config["api_keys"]["openai"]
+    
+    if not api_key or api_key == "YOUR_OPENAI_API_KEY":
+        return "AI summary unavailable. Please add your OpenAI API key to config.json or set the OPENAI_API_KEY environment variable."
         
     try:
-        client = OpenAI(api_key=config["api_keys"]["openai"])
+        client = OpenAI(api_key=api_key)
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[{"role": "user", "content": prompt}],
@@ -1352,6 +1357,13 @@ DATA FOR ANALYSIS:
                     # After printing the AI analysis, replace the Telegram code with this:
                     print(ai_analysis)
 
+                    # Get current data for predictions
+                    try:
+                        current_data = df.iloc[-1].to_dict()
+                    except:
+                        print("[WARN] Could not get current data for prediction saving")
+                        current_data = {}  # Fallback empty dict
+
                     # Enhanced Telegram notification with more details
                     try:
                         # Create a simple message with the most important parts
@@ -1504,21 +1516,22 @@ DATA FOR ANALYSIS:
                                 "eth_prediction": eth_prediction
                             }
                             
-                            # Save detailed prediction
-                            current_data = df.iloc[-1].to_dict()
-                            save_detailed_prediction(structured_prediction, current_data)
-                            print("[INFO] Structured prediction data saved successfully")
-                        else:
-                            print("[WARN] Could not parse structured format from AI response")
-                        
-                        # Also save in the original format for backward compatibility
-                        save_prediction(ai_analysis, current_data)
-                        
-                    except Exception as e:
-                        print(f"[ERROR] Failed to parse structured prediction: {e}")
-                        # Fall back to original format
-                        current_data = df.iloc[-1].to_dict()
-                        save_prediction(ai_analysis, current_data)
+                            # Save detailed prediction (only if we have current_data)
+                            if current_data:
+                                save_detailed_prediction(structured_prediction, current_data)
+                                print("[INFO] Structured prediction data saved successfully")
+                            else:
+                                print("[WARN] Could not save structured prediction - missing current data")
+                                
+                            # Also save in original format
+                            if current_data:
+                                save_prediction(ai_analysis, current_data)
+                            
+                        except Exception as e:
+                            print(f"[ERROR] Failed to parse structured prediction: {e}")
+                            # Only try to save in original format if we have current_data
+                            if current_data:
+                                save_prediction(ai_analysis, current_data)
                     
         except Exception as e:
             print(f"\n[ERROR] Failed to generate AI insights: {e}")
