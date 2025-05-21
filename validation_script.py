@@ -63,17 +63,21 @@ def send_telegram_message(message, disable_web_page_preview=True):
 def is_duplicate_validation_point(validation_points, new_point):
     """Check if a validation point is already in the list"""
     for point in validation_points:
-        if (point["coin"] == new_point["coin"] and 
-            point["type"] == new_point["type"]):
-            # For entry points, check if ranges overlap
-            if "ENTRY_POINT_HIT" in point["type"]:
-                return True
-            # For take profit targets, check if level is the same
-            elif "TP" in point["type"] and "predicted_level" in point and "predicted_level" in new_point:
-                if point["predicted_level"] == new_point["predicted_level"]:
+        if (point["coin"] == new_point["coin"]):
+            # For take profit targets, check if both TP level number and predicted level match
+            if "TP" in point["type"] and "TP" in new_point["type"] and "predicted_level" in point and "predicted_level" in new_point:
+                # Extract TP number from type (e.g., "TP1_HIT" -> "1")
+                point_tp_num = re.search(r'TP(\d+)', point["type"]).group(1)
+                new_point_tp_num = re.search(r'TP(\d+)', new_point["type"]).group(1)
+                
+                # Consider it duplicate if same TP number AND same level
+                if point_tp_num == new_point_tp_num and point["predicted_level"] == new_point["predicted_level"]:
                     return True
+            # For entry points, always consider it duplicate if type matches
+            elif "ENTRY_POINT_HIT" in point["type"] and "ENTRY_POINT_HIT" in new_point["type"]:
+                return True
             # For stop loss, always consider it duplicate if type matches
-            elif "STOP_LOSS_HIT" in point["type"]:
+            elif "STOP_LOSS_HIT" in point["type"] and "STOP_LOSS_HIT" in new_point["type"]:
                 return True
     return False
 
@@ -187,12 +191,17 @@ def validate_predictions():
     now = datetime.now()
     
     for i, prediction in enumerate(predictions):
+        # Initialize validation_points if not present
+        if "validation_points" not in prediction:
+            prediction["validation_points"] = []
+            
         # Skip already completed predictions
         if prediction.get("final_accuracy") is not None:
             continue
         
         # Get prediction timestamp
         pred_time = datetime.strptime(prediction["timestamp"], "%Y-%m-%d %H:%M:%S")
+        pred_id = f"ID-{i+1}"  # Create a simple ID for logging
         
         # Check if we should validate BTC prediction
         if "predictions" in prediction and "btc_prediction" in prediction["predictions"]:
@@ -217,11 +226,11 @@ def validate_predictions():
             if "take_profit_targets" in btc_pred:
                 tp_str = btc_pred["take_profit_targets"]
                 # Extract price values using regex
-                tp_match = re.findall(r'TP[0-9]+:\s*\$([0-9,]+(?:\.[0-9]+)?)', tp_str)
-                for tp in tp_match:
+                tp_match = re.findall(r'TP([0-9]+):\s*\$([0-9,]+(?:\.[0-9]+)?)', tp_str)
+                for tp_num, tp_val in tp_match:
                     try:
                         # Convert to float, removing commas
-                        tp_targets.append(float(tp.replace(',', '')))
+                        tp_targets.append((tp_num, float(tp_val.replace(',', ''))))
                     except:
                         pass
             
@@ -242,7 +251,7 @@ def validate_predictions():
             if entry_range and len(entry_range) == 2:
                 min_range = min(entry_range)
                 max_range = max(entry_range)
-                print(f"[DEBUG] Checking BTC entry point: ${min_range} - ${max_range} against current: ${btc_price}")
+                print(f"[DEBUG] Checking BTC entry point ({pred_id}): ${min_range} - ${max_range} against current: ${btc_price}")
                 
                 if min_range <= btc_price <= max_range:
                     validation_point = {
@@ -250,44 +259,46 @@ def validate_predictions():
                         "type": "ENTRY_POINT_HIT",
                         "predicted_range": [min_range, max_range],
                         "actual_price": btc_price,
-                        "timestamp": now.strftime("%Y-%m-%d %H:%M:%S")
+                        "timestamp": now.strftime("%Y-%m-%d %H:%M:%S"),
+                        "prediction_id": pred_id
                     }
                     
                     # Check for duplicate before adding
                     if not is_duplicate_validation_point(prediction.get("validation_points", []), validation_point):
                         prediction["validation_points"].append(validation_point)
                         updated = True
-                        print(f"[INFO] BTC entry point hit: ${btc_price}")
+                        print(f"[INFO] BTC entry point hit ({pred_id}): ${btc_price}")
                         
                         # Add to Telegram notification
-                        validation_msg = f"🎯 <b>BTC ENTRY POINT HIT</b>\nPrice: ${btc_price:,.2f}\nTarget Range: ${min_range:,.2f} - ${max_range:,.2f}"
+                        validation_msg = f"🎯 <b>BTC ENTRY POINT HIT</b>\nPrice: ${btc_price:,.2f}\nTarget Range: ${min_range:,.2f} - ${max_range:,.2f}\nPrediction: {pred_id} ({pred_time.strftime('%Y-%m-%d')})"
                         validation_messages.append(validation_msg)
             
             # Get direction
             direction = btc_pred.get("direction", "").upper() if btc_pred.get("direction") else ""
             
             # Check take profit targets
-            for idx, tp in enumerate(tp_targets):
+            for tp_num, tp in tp_targets:
                 # For bullish direction, price needs to go up to hit TP
                 # For bearish direction, price needs to go down to hit TP
                 if (direction == "BULLISH" and btc_price >= tp) or \
                    (direction == "BEARISH" and btc_price <= tp):
                     validation_point = {
                         "coin": "BTC",
-                        "type": f"TP{idx+1}_HIT",
+                        "type": f"TP{tp_num}_HIT",
                         "predicted_level": tp,
                         "actual_price": btc_price,
-                        "timestamp": now.strftime("%Y-%m-%d %H:%M:%S")
+                        "timestamp": now.strftime("%Y-%m-%d %H:%M:%S"),
+                        "prediction_id": pred_id
                     }
                     
                     # Check for duplicate before adding
                     if not is_duplicate_validation_point(prediction.get("validation_points", []), validation_point):
                         prediction["validation_points"].append(validation_point)
                         updated = True
-                        print(f"[INFO] BTC TP{idx+1} hit: ${btc_price}")
+                        print(f"[INFO] BTC TP{tp_num} hit ({pred_id}): ${btc_price}")
                         
                         # Add to Telegram notification
-                        validation_msg = f"🎯 <b>BTC TP{idx+1} HIT</b>\nPrice: ${btc_price:,.2f}\nTarget: ${tp:,.2f}\nDirection: {direction}"
+                        validation_msg = f"🎯 <b>BTC TP{tp_num} HIT</b>\nPrice: ${btc_price:,.2f}\nTarget: ${tp:,.2f}\nDirection: {direction}\nPrediction: {pred_id} ({pred_time.strftime('%Y-%m-%d')})"
                         validation_messages.append(validation_msg)
             
             # Check stop loss
@@ -301,17 +312,18 @@ def validate_predictions():
                         "type": "STOP_LOSS_HIT",
                         "predicted_level": sl_level,
                         "actual_price": btc_price,
-                        "timestamp": now.strftime("%Y-%m-%d %H:%M:%S")
+                        "timestamp": now.strftime("%Y-%m-%d %H:%M:%S"),
+                        "prediction_id": pred_id
                     }
                     
                     # Check for duplicate before adding
                     if not is_duplicate_validation_point(prediction.get("validation_points", []), validation_point):
                         prediction["validation_points"].append(validation_point)
                         updated = True
-                        print(f"[INFO] BTC stop loss hit: ${btc_price}")
+                        print(f"[INFO] BTC stop loss hit ({pred_id}): ${btc_price}")
                         
                         # Add to Telegram notification
-                        validation_msg = f"⚠️ <b>BTC STOP LOSS HIT</b>\nPrice: ${btc_price:,.2f}\nStop Level: ${sl_level:,.2f}\nDirection: {direction}"
+                        validation_msg = f"⚠️ <b>BTC STOP LOSS HIT</b>\nPrice: ${btc_price:,.2f}\nStop Level: ${sl_level:,.2f}\nDirection: {direction}\nPrediction: {pred_id} ({pred_time.strftime('%Y-%m-%d')})"
                         validation_messages.append(validation_msg)
         
         # Check if we should validate ETH prediction - very similar to BTC validation
@@ -334,10 +346,10 @@ def validate_predictions():
             tp_targets = []
             if "take_profit_targets" in eth_pred:
                 tp_str = eth_pred["take_profit_targets"]
-                tp_match = re.findall(r'TP[0-9]+:\s*\$([0-9,]+(?:\.[0-9]+)?)', tp_str)
-                for tp in tp_match:
+                tp_match = re.findall(r'TP([0-9]+):\s*\$([0-9,]+(?:\.[0-9]+)?)', tp_str)
+                for tp_num, tp_val in tp_match:
                     try:
-                        tp_targets.append(float(tp.replace(',', '')))
+                        tp_targets.append((tp_num, float(tp_val.replace(',', ''))))
                     except:
                         pass
             
@@ -356,7 +368,7 @@ def validate_predictions():
             if entry_range and len(entry_range) == 2:
                 min_range = min(entry_range)
                 max_range = max(entry_range)
-                print(f"[DEBUG] Checking ETH entry point: ${min_range} - ${max_range} against current: ${eth_price}")
+                print(f"[DEBUG] Checking ETH entry point ({pred_id}): ${min_range} - ${max_range} against current: ${eth_price}")
                 
                 if min_range <= eth_price <= max_range:
                     validation_point = {
@@ -364,42 +376,44 @@ def validate_predictions():
                         "type": "ENTRY_POINT_HIT",
                         "predicted_range": [min_range, max_range],
                         "actual_price": eth_price,
-                        "timestamp": now.strftime("%Y-%m-%d %H:%M:%S")
+                        "timestamp": now.strftime("%Y-%m-%d %H:%M:%S"),
+                        "prediction_id": pred_id
                     }
                     
                     # Check for duplicate before adding
                     if not is_duplicate_validation_point(prediction.get("validation_points", []), validation_point):
                         prediction["validation_points"].append(validation_point)
                         updated = True
-                        print(f"[INFO] ETH entry point hit: ${eth_price}")
+                        print(f"[INFO] ETH entry point hit ({pred_id}): ${eth_price}")
                         
                         # Add to Telegram notification
-                        validation_msg = f"🎯 <b>ETH ENTRY POINT HIT</b>\nPrice: ${eth_price:,.2f}\nTarget Range: ${min_range:,.2f} - ${max_range:,.2f}"
+                        validation_msg = f"🎯 <b>ETH ENTRY POINT HIT</b>\nPrice: ${eth_price:,.2f}\nTarget Range: ${min_range:,.2f} - ${max_range:,.2f}\nPrediction: {pred_id} ({pred_time.strftime('%Y-%m-%d')})"
                         validation_messages.append(validation_msg)
             
             # Get direction
             direction = eth_pred.get("direction", "").upper() if eth_pred.get("direction") else ""
             
             # Check take profit targets
-            for idx, tp in enumerate(tp_targets):
+            for tp_num, tp in tp_targets:
                 if (direction == "BULLISH" and eth_price >= tp) or \
                    (direction == "BEARISH" and eth_price <= tp):
                     validation_point = {
                         "coin": "ETH",
-                        "type": f"TP{idx+1}_HIT",
+                        "type": f"TP{tp_num}_HIT",
                         "predicted_level": tp,
                         "actual_price": eth_price,
-                        "timestamp": now.strftime("%Y-%m-%d %H:%M:%S")
+                        "timestamp": now.strftime("%Y-%m-%d %H:%M:%S"),
+                        "prediction_id": pred_id
                     }
                     
                     # Check for duplicate before adding
                     if not is_duplicate_validation_point(prediction.get("validation_points", []), validation_point):
                         prediction["validation_points"].append(validation_point)
                         updated = True
-                        print(f"[INFO] ETH TP{idx+1} hit: ${eth_price}")
+                        print(f"[INFO] ETH TP{tp_num} hit ({pred_id}): ${eth_price}")
                         
                         # Add to Telegram notification
-                        validation_msg = f"🎯 <b>ETH TP{idx+1} HIT</b>\nPrice: ${eth_price:,.2f}\nTarget: ${tp:,.2f}\nDirection: {direction}"
+                        validation_msg = f"🎯 <b>ETH TP{tp_num} HIT</b>\nPrice: ${eth_price:,.2f}\nTarget: ${tp:,.2f}\nDirection: {direction}\nPrediction: {pred_id} ({pred_time.strftime('%Y-%m-%d')})"
                         validation_messages.append(validation_msg)
             
             # Check stop loss
@@ -411,17 +425,18 @@ def validate_predictions():
                         "type": "STOP_LOSS_HIT",
                         "predicted_level": sl_level,
                         "actual_price": eth_price,
-                        "timestamp": now.strftime("%Y-%m-%d %H:%M:%S")
+                        "timestamp": now.strftime("%Y-%m-%d %H:%M:%S"),
+                        "prediction_id": pred_id
                     }
                     
                     # Check for duplicate before adding
                     if not is_duplicate_validation_point(prediction.get("validation_points", []), validation_point):
                         prediction["validation_points"].append(validation_point)
                         updated = True
-                        print(f"[INFO] ETH stop loss hit: ${eth_price}")
+                        print(f"[INFO] ETH stop loss hit ({pred_id}): ${eth_price}")
                         
                         # Add to Telegram notification
-                        validation_msg = f"⚠️ <b>ETH STOP LOSS HIT</b>\nPrice: ${eth_price:,.2f}\nStop Level: ${sl_level:,.2f}\nDirection: {direction}"
+                        validation_msg = f"⚠️ <b>ETH STOP LOSS HIT</b>\nPrice: ${eth_price:,.2f}\nStop Level: ${sl_level:,.2f}\nDirection: {direction}\nPrediction: {pred_id} ({pred_time.strftime('%Y-%m-%d')})"
                         validation_messages.append(validation_msg)
         
         # Check if prediction timeframe has expired and calculate final accuracy
@@ -453,13 +468,13 @@ def validate_predictions():
                                     accuracy = calculate_prediction_accuracy(prediction)
                                     prediction["final_accuracy"] = accuracy
                                     updated = True
-                                    print(f"[INFO] {coin} prediction from {pred_time} has expired. Final accuracy: {accuracy:.2f}%")
+                                    print(f"[INFO] {coin} prediction ({pred_id}) from {pred_time} has expired. Final accuracy: {accuracy:.2f}%")
                                     
                                     # Add to Telegram notification
-                                    validation_msg = f"📊 <b>{coin} PREDICTION COMPLETED</b>\nTimeframe: {timeframe_str}\nAccuracy: {accuracy:.2f}%\nOriginal Prediction: {pred_time.strftime('%Y-%m-%d %H:%M')}"
+                                    validation_msg = f"📊 <b>{coin} PREDICTION COMPLETED</b>\nTimeframe: {timeframe_str}\nAccuracy: {accuracy:.2f}%\nPrediction: {pred_id} ({pred_time.strftime('%Y-%m-%d %H:%M')})"
                                     validation_messages.append(validation_msg)
                         except Exception as e:
-                            print(f"[ERROR] Failed to parse timeframe for {coin}: {e}")
+                            print(f"[ERROR] Failed to parse timeframe for {coin} ({pred_id}): {e}")
     
     # Save updated predictions
     if updated:
