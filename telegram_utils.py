@@ -15,8 +15,8 @@ def load_telegram_config():
             "chat_id": chat_id,
             "enabled": True
         }
-            # Fall back to default if file exists but is corrupted
-            pass
+    # Fall back to default if file exists but is corrupted
+    pass
     
     # Create default config file
     default_config = {
