@@ -3,7 +3,7 @@
 import requests
 import json
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
 import os
 import re
@@ -157,6 +157,33 @@ def get_crypto_prices():
     # All methods failed
     raise Exception(f"Failed to get cryptocurrency prices from all sources. Errors: {errors}")
 
+def is_fresh_prediction(prediction_time):
+    """Check if a prediction is from the most recent cycle (8am/8pm)"""
+    now = datetime.now()
+    
+    # Get the most recent 8am or 8pm timestamp
+    current_hour = now.hour
+    if 8 <= current_hour < 20:
+        # Last prediction window was at 8am today
+        last_window = datetime(now.year, now.month, now.day, 8, 0, 0)
+    else:
+        # If it's before 8am, the last window was 8pm yesterday
+        if current_hour < 8:
+            yesterday = now - timedelta(days=1)
+            last_window = datetime(yesterday.year, yesterday.month, yesterday.day, 20, 0, 0)
+        else:
+            # If it's after 8pm, the last window was 8pm today
+            last_window = datetime(now.year, now.month, now.day, 20, 0, 0)
+    
+    # Get the previous window too (to account for slight timing differences)
+    previous_window = last_window - timedelta(hours=12)
+    
+    # Check if the prediction is from the most recent window (with a buffer)
+    time_diff = now - prediction_time
+    
+    # Consider it fresh if it's from the current or previous window (within 16 hours)
+    return time_diff.total_seconds() < 16 * 3600
+
 def validate_predictions():
     """Check if price has hit predicted levels and update prediction file"""
     print("[DEBUG] Starting validation with Telegram enabled:", os.environ.get("TELEGRAM_BOT_TOKEN") is not None)
@@ -185,8 +212,11 @@ def validate_predictions():
         print(f"[ERROR] Failed to load predictions: {e}")
         return
     
-    # Prepare for Telegram notifications
-    validation_messages = []
+    # Lists to track validation points for notifications
+    entry_points_hit = []  # For entry point notifications
+    tp_sl_hits = []        # For tracking TP/SL hits (not for notifications, just tracking)
+    accuracy_updates = []  # For prediction completion notifications
+    
     updated = False
     now = datetime.now()
     
@@ -202,6 +232,9 @@ def validate_predictions():
         # Get prediction timestamp
         pred_time = datetime.strptime(prediction["timestamp"], "%Y-%m-%d %H:%M:%S")
         pred_id = f"ID-{i+1}"  # Create a simple ID for logging
+        
+        # Check if prediction is fresh (for notification purposes)
+        is_fresh = is_fresh_prediction(pred_time)
         
         # Check if we should validate BTC prediction
         if "predictions" in prediction and "btc_prediction" in prediction["predictions"]:
@@ -246,6 +279,9 @@ def validate_predictions():
                         sl_level = float(sl_match[0].replace(',', ''))
                     except:
                         pass
+                        
+            # Get direction
+            direction = btc_pred.get("direction", "").upper() if btc_pred.get("direction") else ""
             
             # Check if current price is within entry range
             if entry_range and len(entry_range) == 2:
@@ -269,12 +305,18 @@ def validate_predictions():
                         updated = True
                         print(f"[INFO] BTC entry point hit ({pred_id}): ${btc_price}")
                         
-                        # Add to Telegram notification
-                        validation_msg = f"🎯 <b>BTC ENTRY POINT HIT</b>\nPrice: ${btc_price:,.2f}\nTarget Range: ${min_range:,.2f} - ${max_range:,.2f}\nPrediction: {pred_id} ({pred_time.strftime('%Y-%m-%d')})"
-                        validation_messages.append(validation_msg)
-            
-            # Get direction
-            direction = btc_pred.get("direction", "").upper() if btc_pred.get("direction") else ""
+                        # Only add to notification list if it's a fresh prediction
+                        if is_fresh:
+                            entry_point = {
+                                "coin": "BTC",
+                                "price": btc_price,
+                                "range": [min_range, max_range],
+                                "direction": direction,
+                                "prediction_id": pred_id,
+                                "timestamp": pred_time.strftime("%Y-%m-%d %H:%M"),
+                                "timeframe": btc_pred.get("timeframe", "Unknown")
+                            }
+                            entry_points_hit.append(entry_point)
             
             # Check take profit targets
             for tp_num, tp in tp_targets:
@@ -297,9 +339,15 @@ def validate_predictions():
                         updated = True
                         print(f"[INFO] BTC TP{tp_num} hit ({pred_id}): ${btc_price}")
                         
-                        # Add to Telegram notification
-                        validation_msg = f"🎯 <b>BTC TP{tp_num} HIT</b>\nPrice: ${btc_price:,.2f}\nTarget: ${tp:,.2f}\nDirection: {direction}\nPrediction: {pred_id} ({pred_time.strftime('%Y-%m-%d')})"
-                        validation_messages.append(validation_msg)
+                        # Add to TP/SL tracking list (but not for notifications)
+                        tp_sl_info = {
+                            "coin": "BTC",
+                            "type": f"TP{tp_num}",
+                            "price": btc_price,
+                            "target": tp,
+                            "prediction_id": pred_id
+                        }
+                        tp_sl_hits.append(tp_sl_info)
             
             # Check stop loss
             if sl_level:
@@ -322,9 +370,15 @@ def validate_predictions():
                         updated = True
                         print(f"[INFO] BTC stop loss hit ({pred_id}): ${btc_price}")
                         
-                        # Add to Telegram notification
-                        validation_msg = f"⚠️ <b>BTC STOP LOSS HIT</b>\nPrice: ${btc_price:,.2f}\nStop Level: ${sl_level:,.2f}\nDirection: {direction}\nPrediction: {pred_id} ({pred_time.strftime('%Y-%m-%d')})"
-                        validation_messages.append(validation_msg)
+                        # Add to TP/SL tracking list (but not for notifications)
+                        tp_sl_info = {
+                            "coin": "BTC",
+                            "type": "SL",
+                            "price": btc_price,
+                            "target": sl_level,
+                            "prediction_id": pred_id
+                        }
+                        tp_sl_hits.append(tp_sl_info)
         
         # Check if we should validate ETH prediction - very similar to BTC validation
         if "predictions" in prediction and "eth_prediction" in prediction["predictions"]:
@@ -363,6 +417,9 @@ def validate_predictions():
                         sl_level = float(sl_match[0].replace(',', ''))
                     except:
                         pass
+                        
+            # Get direction
+            direction = eth_pred.get("direction", "").upper() if eth_pred.get("direction") else ""
             
             # Check if current price is within entry range
             if entry_range and len(entry_range) == 2:
@@ -386,12 +443,18 @@ def validate_predictions():
                         updated = True
                         print(f"[INFO] ETH entry point hit ({pred_id}): ${eth_price}")
                         
-                        # Add to Telegram notification
-                        validation_msg = f"🎯 <b>ETH ENTRY POINT HIT</b>\nPrice: ${eth_price:,.2f}\nTarget Range: ${min_range:,.2f} - ${max_range:,.2f}\nPrediction: {pred_id} ({pred_time.strftime('%Y-%m-%d')})"
-                        validation_messages.append(validation_msg)
-            
-            # Get direction
-            direction = eth_pred.get("direction", "").upper() if eth_pred.get("direction") else ""
+                        # Only add to notification list if it's a fresh prediction
+                        if is_fresh:
+                            entry_point = {
+                                "coin": "ETH",
+                                "price": eth_price,
+                                "range": [min_range, max_range],
+                                "direction": direction,
+                                "prediction_id": pred_id,
+                                "timestamp": pred_time.strftime("%Y-%m-%d %H:%M"),
+                                "timeframe": eth_pred.get("timeframe", "Unknown")
+                            }
+                            entry_points_hit.append(entry_point)
             
             # Check take profit targets
             for tp_num, tp in tp_targets:
@@ -412,9 +475,15 @@ def validate_predictions():
                         updated = True
                         print(f"[INFO] ETH TP{tp_num} hit ({pred_id}): ${eth_price}")
                         
-                        # Add to Telegram notification
-                        validation_msg = f"🎯 <b>ETH TP{tp_num} HIT</b>\nPrice: ${eth_price:,.2f}\nTarget: ${tp:,.2f}\nDirection: {direction}\nPrediction: {pred_id} ({pred_time.strftime('%Y-%m-%d')})"
-                        validation_messages.append(validation_msg)
+                        # Add to TP/SL tracking list (but not for notifications)
+                        tp_sl_info = {
+                            "coin": "ETH",
+                            "type": f"TP{tp_num}",
+                            "price": eth_price,
+                            "target": tp,
+                            "prediction_id": pred_id
+                        }
+                        tp_sl_hits.append(tp_sl_info)
             
             # Check stop loss
             if sl_level:
@@ -435,9 +504,15 @@ def validate_predictions():
                         updated = True
                         print(f"[INFO] ETH stop loss hit ({pred_id}): ${eth_price}")
                         
-                        # Add to Telegram notification
-                        validation_msg = f"⚠️ <b>ETH STOP LOSS HIT</b>\nPrice: ${eth_price:,.2f}\nStop Level: ${sl_level:,.2f}\nDirection: {direction}\nPrediction: {pred_id} ({pred_time.strftime('%Y-%m-%d')})"
-                        validation_messages.append(validation_msg)
+                        # Add to TP/SL tracking list (but not for notifications)
+                        tp_sl_info = {
+                            "coin": "ETH",
+                            "type": "SL",
+                            "price": eth_price,
+                            "target": sl_level,
+                            "prediction_id": pred_id
+                        }
+                        tp_sl_hits.append(tp_sl_info)
         
         # Check if prediction timeframe has expired and calculate final accuracy
         # This examines the "timeframe" field to determine when a prediction expires
@@ -470,9 +545,15 @@ def validate_predictions():
                                     updated = True
                                     print(f"[INFO] {coin} prediction ({pred_id}) from {pred_time} has expired. Final accuracy: {accuracy:.2f}%")
                                     
-                                    # Add to Telegram notification
-                                    validation_msg = f"📊 <b>{coin} PREDICTION COMPLETED</b>\nTimeframe: {timeframe_str}\nAccuracy: {accuracy:.2f}%\nPrediction: {pred_id} ({pred_time.strftime('%Y-%m-%d %H:%M')})"
-                                    validation_messages.append(validation_msg)
+                                    # Add to accuracy updates list
+                                    accuracy_info = {
+                                        "coin": coin,
+                                        "accuracy": accuracy,
+                                        "timeframe": timeframe_str,
+                                        "prediction_id": pred_id,
+                                        "timestamp": pred_time.strftime("%Y-%m-%d %H:%M")
+                                    }
+                                    accuracy_updates.append(accuracy_info)
                         except Exception as e:
                             print(f"[ERROR] Failed to parse timeframe for {coin} ({pred_id}): {e}")
     
@@ -483,11 +564,60 @@ def validate_predictions():
                 json.dump(predictions, f, indent=4)
             print("[INFO] Prediction file updated")
             
-            # Send Telegram notifications if any validation points were recorded
-            if validation_messages:
-                message = "🚨 <b>PREDICTION TARGETS HIT</b>\n\n" + "\n\n".join(validation_messages)
+            # Send Telegram notifications if any entry points were hit
+            if entry_points_hit:
+                # Group by coin
+                btc_entries = [e for e in entry_points_hit if e["coin"] == "BTC"]
+                eth_entries = [e for e in entry_points_hit if e["coin"] == "ETH"]
+                
+                entry_messages = []
+                
+                # Add BTC entry points
+                if btc_entries:
+                    btc_msg_parts = ["🚨 <b>BTC ENTRY POINTS HIT</b>"]
+                    for entry in btc_entries:
+                        min_range, max_range = entry["range"]
+                        btc_msg_parts.append(
+                            f"• <b>{entry['direction']}</b> prediction from {entry['timestamp']}\n"
+                            f"  Current: ${entry['price']:,.2f}\n"
+                            f"  Range: ${min_range:,.2f} - ${max_range:,.2f}\n"
+                            f"  Timeframe: {entry['timeframe']}"
+                        )
+                    entry_messages.append("\n\n".join(btc_msg_parts))
+                
+                # Add ETH entry points
+                if eth_entries:
+                    eth_msg_parts = ["🚨 <b>ETH ENTRY POINTS HIT</b>"]
+                    for entry in eth_entries:
+                        min_range, max_range = entry["range"]
+                        eth_msg_parts.append(
+                            f"• <b>{entry['direction']}</b> prediction from {entry['timestamp']}\n"
+                            f"  Current: ${entry['price']:,.2f}\n"
+                            f"  Range: ${min_range:,.2f} - ${max_range:,.2f}\n"
+                            f"  Timeframe: {entry['timeframe']}"
+                        )
+                    entry_messages.append("\n\n".join(eth_msg_parts))
+                
+                # Send entry point notifications
+                if entry_messages:
+                    message = "\n\n".join(entry_messages)
+                    result = send_telegram_message(message)
+                    print(f"[INFO] Entry point notification result: {result}")
+            
+            # Send accuracy update notifications (at end of timeframe)
+            if accuracy_updates:
+                accuracy_msg_parts = ["📊 <b>PREDICTION RESULTS</b>"]
+                for acc in accuracy_updates:
+                    accuracy_msg_parts.append(
+                        f"• {acc['coin']} Prediction ({acc['timestamp']})\n"
+                        f"  Timeframe: {acc['timeframe']}\n"
+                        f"  Final Accuracy: {acc['accuracy']:.2f}%"
+                    )
+                
+                message = "\n\n".join(accuracy_msg_parts)
                 result = send_telegram_message(message)
-                print(f"[INFO] Telegram notification result: {result}")
+                print(f"[INFO] Accuracy update notification result: {result}")
+                
         except Exception as e:
             print(f"[ERROR] Failed to save updated predictions: {e}")
 
