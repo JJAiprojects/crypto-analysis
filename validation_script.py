@@ -77,6 +77,82 @@ def is_duplicate_validation_point(validation_points, new_point):
                 return True
     return False
 
+def get_crypto_prices():
+    """Get current cryptocurrency prices with multiple fallbacks"""
+    # Try multiple API endpoints
+    apis = [
+        {
+            "name": "CoinGecko",
+            "url": "https://api.coingecko.com/api/v3/simple/price",
+            "params": {"ids": "bitcoin,ethereum", "vs_currencies": "usd"},
+            "extract": lambda data: {
+                "btc": data.get("bitcoin", {}).get("usd"),
+                "eth": data.get("ethereum", {}).get("usd")
+            }
+        },
+        {
+            "name": "Binance",
+            "url": "https://api.binance.com/api/v3/ticker/price",
+            "params": {"symbols": '["BTCUSDT","ETHUSDT"]'},
+            "extract": lambda data: {
+                "btc": float(next((item["price"] for item in data if item["symbol"] == "BTCUSDT"), None)),
+                "eth": float(next((item["price"] for item in data if item["symbol"] == "ETHUSDT"), None))
+            }
+        },
+        {
+            "name": "Alternative Price API",
+            "url": "https://min-api.cryptocompare.com/data/pricemulti",
+            "params": {"fsyms": "BTC,ETH", "tsyms": "USD"},
+            "extract": lambda data: {
+                "btc": data.get("BTC", {}).get("USD"),
+                "eth": data.get("ETH", {}).get("USD")
+            }
+        }
+    ]
+    
+    errors = []
+    
+    # Try each API in order
+    for api in apis:
+        try:
+            print(f"[INFO] Trying to get prices from {api['name']}...")
+            response = requests.get(api["url"], params=api["params"], timeout=10)
+            response.raise_for_status()
+            data = response.json()
+            
+            # Extract prices using the provided extract function
+            prices = api["extract"](data)
+            
+            # Validate that both prices were retrieved
+            if prices["btc"] is not None and prices["eth"] is not None:
+                print(f"[INFO] Successfully retrieved prices from {api['name']}")
+                return prices
+            else:
+                errors.append(f"{api['name']}: Missing price data")
+        except Exception as e:
+            errors.append(f"{api['name']}: {str(e)}")
+            print(f"[WARN] Failed to get prices from {api['name']}: {e}")
+    
+    # If all APIs fail, try to use latest saved prices
+    try:
+        prediction_file = "detailed_predictions.json"
+        if os.path.exists(prediction_file):
+            with open(prediction_file, "r") as f:
+                predictions = json.load(f)
+                if predictions and len(predictions) > 0:
+                    latest = predictions[-1]
+                    if "market_data" in latest:
+                        btc_price = latest["market_data"].get("btc_price")
+                        eth_price = latest["market_data"].get("eth_price")
+                        if btc_price is not None and eth_price is not None:
+                            print("[INFO] Using latest saved prices as fallback")
+                            return {"btc": btc_price, "eth": eth_price}
+    except Exception as e:
+        errors.append(f"Fallback: {str(e)}")
+    
+    # All methods failed
+    raise Exception(f"Failed to get cryptocurrency prices from all sources. Errors: {errors}")
+
 def validate_predictions():
     """Check if price has hit predicted levels and update prediction file"""
     print("[DEBUG] Starting validation with Telegram enabled:", os.environ.get("TELEGRAM_BOT_TOKEN") is not None)
@@ -86,12 +162,11 @@ def validate_predictions():
         print("[INFO] No predictions to validate yet")
         return
     
-    # Get current prices
+    # Get current prices with fallbacks
     try:
-        response = requests.get("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd")
-        current_prices = response.json()
-        btc_price = current_prices["bitcoin"]["usd"]
-        eth_price = current_prices["ethereum"]["usd"]
+        prices = get_crypto_prices()
+        btc_price = prices["btc"]
+        eth_price = prices["eth"]
         
         print(f"[INFO] Current prices - BTC: ${btc_price}, ETH: ${eth_price}")
     except Exception as e:
