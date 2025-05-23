@@ -22,14 +22,40 @@ from dotenv import load_dotenv
 # ----------------------------
 def load_config():
     """Load configuration with proper handling of sensitive data"""
-    # Load environment variables
-    load_dotenv()
+    # Load environment variables - try .env file first (local), then system env vars (Render)
+    env_loaded = False
+    
+    # Try loading .env file (for local development)
+    if os.path.exists('.env'):
+        try:
+            load_dotenv()
+            print("[INFO] Loaded .env file for local development")
+            env_loaded = True
+        except Exception as e:
+            print(f"[WARN] .env file exists but failed to load: {e}")
+    else:
+        print("[INFO] No .env file found - using system environment variables (cloud deployment mode)")
+    
+    # Verify we can access environment variables
+    test_vars = ['OPENAI_API_KEY', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID']
+    env_status = []
+    
+    for var in test_vars:
+        value = os.getenv(var)
+        if value and value != "YOUR_OPENAI_API_KEY":
+            env_status.append(f"✓ {var}")
+        else:
+            env_status.append(f"✗ {var}")
+    
+    print(f"[INFO] Environment variables status:")
+    for status in env_status:
+        print(f"  {status}")
     
     # Initialize config with default values
     config = {
         "api_keys": {
             "openai": "YOUR_OPENAI_API_KEY",
-            "fred": "YOUR_FRED_API_KEY", 
+            "fred": "YOUR_FRED_API_KEY",
             "alphavantage": "YOUR_ALPHAVANTAGE_API_KEY"
         },
         "telegram": {
@@ -1588,7 +1614,7 @@ As a professional trader, provide your analysis for the {timeframe} in this stru
 - Invalidation levels
 
 Keep your analysis concise, professional, and actionable. Focus on the highest probability outcomes based on the data convergence."""
-
+        
     try:
         client = OpenAI(api_key=api_key)
         response = client.chat.completions.create(
