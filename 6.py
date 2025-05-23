@@ -2058,6 +2058,42 @@ def main():
     """Main execution function"""
     global config  # Make sure we're using the global config
     
+    # FIRST: Validate critical environment variables for Render deployment
+    critical_vars = ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID', 'OPENAI_API_KEY']
+    missing_vars = []
+    
+    for var in critical_vars:
+        value = os.getenv(var)
+        if not value or value == "YOUR_OPENAI_API_KEY" or len(value) < 5:
+            missing_vars.append(var)
+    
+    if missing_vars:
+        print("=" * 60)
+        print("❌ ENVIRONMENT CONFIGURATION ERROR")
+        print("=" * 60)
+        print("Missing or invalid environment variables:")
+        for var in missing_vars:
+            print(f"  ❌ {var}")
+        print()
+        print("🔧 TO FIX ON RENDER:")
+        print("1. Go to your Render dashboard")
+        print("2. Navigate to your service settings")
+        print("3. Go to 'Environment' tab")
+        print("4. Add these environment variables:")
+        for var in missing_vars:
+            if var == 'TELEGRAM_BOT_TOKEN':
+                print(f"   {var} = your_telegram_bot_token")
+            elif var == 'TELEGRAM_CHAT_ID':
+                print(f"   {var} = your_telegram_chat_id")
+            elif var == 'OPENAI_API_KEY':
+                print(f"   {var} = your_openai_api_key")
+        print()
+        print("💡 For local development: Create a .env file with these variables")
+        print("=" * 60)
+        return  # Exit gracefully rather than crashing
+    
+    print("[INFO] ✅ All critical environment variables are configured")
+    
     # Log times in different timezones
     server_time = datetime.now()
     utc_time = datetime.now(timezone.utc)
