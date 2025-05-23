@@ -29,7 +29,7 @@ def load_config():
     config = {
         "api_keys": {
             "openai": "YOUR_OPENAI_API_KEY",
-            "fred": "YOUR_FRED_API_KEY", 
+            "fred": "YOUR_FRED_API_KEY",
             "alphavantage": "YOUR_ALPHAVANTAGE_API_KEY"
         },
         "telegram": {
@@ -1588,7 +1588,7 @@ As a professional trader, provide your analysis for the {timeframe} in this stru
 - Invalidation levels
 
 Keep your analysis concise, professional, and actionable. Focus on the highest probability outcomes based on the data convergence."""
-
+        
     try:
         client = OpenAI(api_key=api_key)
         response = client.chat.completions.create(

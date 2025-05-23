@@ -1,0 +1,17 @@
+# OpenAI API Key (Required)
+OPENAI_API_KEY=your_openai_api_key_here
+
+# Telegram Bot Configuration (Required for notifications)
+TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
+TELEGRAM_CHAT_ID=your_telegram_chat_id_here
+
+# Test Telegram Bot (Optional - for testing)
+TEST_TELEGRAM_BOT_TOKEN=your_test_bot_token_here
+TEST_TELEGRAM_CHAT_ID=your_test_chat_id_here
+
+# API Keys (Optional - fallbacks exist)
+FRED_API_KEY=your_fred_api_key_here
+ALPHAVANTAGE_API_KEY=your_alphavantage_api_key_here
+
+# Timezone (Optional - defaults to UTC)
+TZ=Asia/Ho_Chi_Minh 
