@@ -15,7 +15,13 @@ from telegram_utils import send_telegram_message, TelegramBot
 from ml_enhancer import PredictionEnhancer
 from risk_manager import RiskManager
 from professional_analysis import ProfessionalTraderAnalysis
-from dotenv import load_dotenv
+
+# Optional dotenv import for local development
+try:
+    from dotenv import load_dotenv
+    DOTENV_AVAILABLE = True
+except ImportError:
+    DOTENV_AVAILABLE = False
 
 # ----------------------------
 # 1. Config
@@ -26,15 +32,17 @@ def load_config():
     env_loaded = False
     
     # Try loading .env file (for local development)
-    if os.path.exists('.env'):
-        try:
+    try:
+        if os.path.exists('.env') and DOTENV_AVAILABLE:
             load_dotenv()
-            print("[INFO] Loaded .env file for local development")
+            print("[INFO] ✓ Loaded .env file for local development")
             env_loaded = True
-        except Exception as e:
-            print(f"[WARN] .env file exists but failed to load: {e}")
-    else:
-        print("[INFO] No .env file found - using system environment variables (cloud deployment mode)")
+        elif os.path.exists('.env') and not DOTENV_AVAILABLE:
+            print("[WARN] .env file found but python-dotenv not installed - using system environment variables")
+        else:
+            print("[INFO] No .env file found - using system environment variables (cloud deployment mode)")
+    except Exception as e:
+        print(f"[WARN] Failed to load .env file: {e} - continuing with system environment variables")
     
     # Verify we can access environment variables
     test_vars = ['OPENAI_API_KEY', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID']
@@ -42,10 +50,10 @@ def load_config():
     
     for var in test_vars:
         value = os.getenv(var)
-        if value and value != "YOUR_OPENAI_API_KEY":
-            env_status.append(f"✓ {var}")
+        if value and value != "YOUR_OPENAI_API_KEY" and len(value) > 5:
+            env_status.append(f"✓ {var} (configured)")
         else:
-            env_status.append(f"✗ {var}")
+            env_status.append(f"✗ {var} (missing/invalid)")
     
     print(f"[INFO] Environment variables status:")
     for status in env_status:
