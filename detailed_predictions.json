@@ -46,10 +46,7 @@
                 "timestamp": "2025-05-20 09:42:20"
             }
         ],
-        "final_accuracy": null,
-        "ml_processed": true,
-        "hourly_validated": true,
-        "last_validation": "2025-05-23 11:08:42"
+        "final_accuracy": null
     },
     {
         "date": "2025-05-20",
@@ -87,10 +84,7 @@
             }
         },
         "validation_points": [],
-        "final_accuracy": null,
-        "ml_processed": true,
-        "hourly_validated": true,
-        "last_validation": "2025-05-23 11:08:42"
+        "final_accuracy": null
     },
     {
         "date": "2025-05-20",
@@ -128,10 +122,7 @@
             }
         },
         "validation_points": [],
-        "final_accuracy": null,
-        "ml_processed": true,
-        "hourly_validated": true,
-        "last_validation": "2025-05-23 11:08:42"
+        "final_accuracy": null
     },
     {
         "date": "2025-05-20",
@@ -169,10 +160,7 @@
             }
         },
         "validation_points": [],
-        "final_accuracy": null,
-        "ml_processed": true,
-        "hourly_validated": true,
-        "last_validation": "2025-05-23 11:08:42"
+        "final_accuracy": null
     },
     {
         "date": "2025-05-20",
@@ -210,10 +198,7 @@
             }
         },
         "validation_points": [],
-        "final_accuracy": null,
-        "ml_processed": true,
-        "hourly_validated": true,
-        "last_validation": "2025-05-23 11:08:42"
+        "final_accuracy": null
     },
     {
         "date": "2025-05-20",
@@ -251,10 +236,7 @@
             }
         },
         "validation_points": [],
-        "final_accuracy": null,
-        "ml_processed": true,
-        "hourly_validated": true,
-        "last_validation": "2025-05-23 11:08:42"
+        "final_accuracy": null
     },
     {
         "date": "2025-05-20",
@@ -292,10 +274,7 @@
             }
         },
         "validation_points": [],
-        "final_accuracy": null,
-        "ml_processed": true,
-        "hourly_validated": true,
-        "last_validation": "2025-05-23 11:08:42"
+        "final_accuracy": null
     },
     {
         "date": "2025-05-20",
@@ -333,10 +312,7 @@
             }
         },
         "validation_points": [],
-        "final_accuracy": null,
-        "ml_processed": true,
-        "hourly_validated": true,
-        "last_validation": "2025-05-23 11:08:42"
+        "final_accuracy": null
     },
     {
         "date": "2025-05-20",
@@ -374,10 +350,7 @@
             }
         },
         "validation_points": [],
-        "final_accuracy": null,
-        "ml_processed": true,
-        "hourly_validated": true,
-        "last_validation": "2025-05-23 11:08:42"
+        "final_accuracy": null
     },
     {
         "date": "2025-05-23",
@@ -511,19 +484,7 @@
             "stop_loss_levels": {},
             "take_profit_levels": {}
         },
-        "validation_points": [
-            {
-                "coin": "BTC",
-                "type": "PROFESSIONAL_TARGET_1",
-                "predicted_level": 106381.0,
-                "actual_price": 110939,
-                "scenario": "bullish",
-                "timestamp": "2025-05-23 11:09:06"
-            }
-        ],
-        "final_accuracy": null,
-        "ml_processed": true,
-        "hourly_validated": true,
-        "last_validation": "2025-05-23 11:09:06"
+        "validation_points": [],
+        "final_accuracy": null
     }
 ]
