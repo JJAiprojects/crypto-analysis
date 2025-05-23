@@ -1,22 +1,26 @@
 #!/usr/bin/env python3
 
 import os
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+    DOTENV_AVAILABLE = True
+except ImportError:
+    DOTENV_AVAILABLE = False
+
 from telegram_utils import TelegramBot
 
-# Load environment variables
-load_dotenv()
+# Load environment variables if available
+if os.path.exists('.env') and DOTENV_AVAILABLE:
+    load_dotenv()
+    print("✓ Loaded .env file for local development")
+elif os.path.exists('.env') and not DOTENV_AVAILABLE:
+    print("⚠ .env file found but python-dotenv not installed - using system environment variables")
+else:
+    print("No .env file found - using system environment variables (cloud deployment mode)")
 
 def test_env_loading():
     """Test if environment variables are loading correctly"""
-    print("Testing environment variable loading...")
-    
-    # Check if .env file exists
-    if os.path.exists('.env'):
-        print("✓ .env file exists")
-    else:
-        print("✗ .env file not found!")
-        return False
+    print("\nTesting environment variable loading...")
     
     # Test loading variables
     test_bot_token = os.getenv("TEST_TELEGRAM_BOT_TOKEN")
@@ -29,6 +33,11 @@ def test_env_loading():
         print(f"Bot token starts with: {test_bot_token[:10]}...")
     if test_chat_id:
         print(f"Chat ID: {test_chat_id}")
+    
+    if not test_bot_token or not test_chat_id:
+        print("\n⚠ Missing test environment variables!")
+        print("For local development: Add TEST_TELEGRAM_BOT_TOKEN and TEST_TELEGRAM_CHAT_ID to .env file")
+        print("For cloud deployment: Set these variables in your platform dashboard")
     
     return bool(test_bot_token and test_chat_id)
 

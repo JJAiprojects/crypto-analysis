@@ -14,22 +14,26 @@ log() {
 
 log "Starting Professional Crypto Analysis System in TEST MODE..."
 
-# Check if .env file exists
-if [ ! -f ".env" ]; then
-    log "ERROR: .env file not found!"
-    log "Please create .env file with your API keys and bot tokens"
-    exit 1
+# Check for environment variables (both .env file and system env vars)
+if [ -f ".env" ]; then
+    log "✓ Found .env file - loading local development environment"
+    source .env
+else
+    log "No .env file found - using system environment variables (cloud deployment mode)"
 fi
 
-# Source environment variables
-source .env
-
-# Verify test environment variables
+# Verify critical environment variables are set (from either source)
 if [ -z "$TEST_TELEGRAM_BOT_TOKEN" ] || [ -z "$TEST_TELEGRAM_CHAT_ID" ]; then
     log "ERROR: Missing test environment variables!"
-    log "Please set TEST_TELEGRAM_BOT_TOKEN and TEST_TELEGRAM_CHAT_ID in .env"
+    log "TEST_TELEGRAM_BOT_TOKEN: ${TEST_TELEGRAM_BOT_TOKEN:+SET}"
+    log "TEST_TELEGRAM_CHAT_ID: ${TEST_TELEGRAM_CHAT_ID:+SET}"
+    log ""
+    log "For local development: Add test variables to .env file"
+    log "For cloud deployment: Set test environment variables in your platform dashboard"
     exit 1
 fi
+
+log "✓ Test environment variables configured"
 
 # Check Python availability
 if ! command -v python &> /dev/null; then

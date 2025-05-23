@@ -164,10 +164,17 @@ def debug_production_config():
     
     # Check .env file
     if os.path.exists('.env'):
-        print("✓ .env file exists")
+        print("✓ .env file exists (local development)")
+        try:
+            from dotenv import load_dotenv
+            load_dotenv()
+            print("✓ .env file loaded successfully")
+        except ImportError:
+            print("⚠ python-dotenv not installed - using system environment variables")
+        except Exception as e:
+            print(f"⚠ Error loading .env file: {e}")
     else:
-        print("✗ .env file not found!")
-        return
+        print("No .env file found - using system environment variables (cloud deployment mode)")
     
     # Check production variables
     print("\n📱 PRODUCTION TELEGRAM CONFIG:")
@@ -211,9 +218,14 @@ def debug_production_config():
     # Configuration suggestions
     if not prod_bot_token or not prod_chat_id:
         print("\n🔧 TO FIX:")
-        print("Add these lines to your .env file:")
-        print("TELEGRAM_BOT_TOKEN=your_production_bot_token")
-        print("TELEGRAM_CHAT_ID=your_production_chat_id")
+        if os.path.exists('.env'):
+            print("Add these lines to your .env file:")
+            print("TELEGRAM_BOT_TOKEN=your_production_bot_token")
+            print("TELEGRAM_CHAT_ID=your_production_chat_id")
+        else:
+            print("For cloud deployment: Set these environment variables in your platform dashboard:")
+            print("TELEGRAM_BOT_TOKEN=your_production_bot_token")
+            print("TELEGRAM_CHAT_ID=your_production_chat_id")
 
 if __name__ == "__main__":
     debug_config()

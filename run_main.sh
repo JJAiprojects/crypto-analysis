@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Enhanced run script for the professional crypto analysis system
-# Version: 2.0 - Compatible with major system upgrade
+# Version: 2.1 - Environment-aware (supports both .env and system env vars)
 
 # Set script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -14,22 +14,26 @@ log() {
 
 log "Starting Professional Crypto Analysis System..."
 
-# Check if .env file exists
-if [ ! -f ".env" ]; then
-    log "ERROR: .env file not found!"
-    log "Please create .env file with your API keys and bot tokens"
-    exit 1
+# Check for environment variables (both .env file and system env vars)
+if [ -f ".env" ]; then
+    log "✓ Found .env file - loading local development environment"
+    source .env
+else
+    log "No .env file found - using system environment variables (cloud deployment mode)"
 fi
 
-# Source environment variables
-source .env
-
-# Verify critical environment variables
+# Verify critical environment variables are set (from either source)
 if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
     log "ERROR: Missing critical environment variables!"
-    log "Please set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env"
+    log "TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:+SET}"
+    log "TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:+SET}"
+    log ""
+    log "For local development: Create .env file with your API keys"
+    log "For cloud deployment: Set environment variables in your platform dashboard"
     exit 1
 fi
+
+log "✓ Environment variables configured"
 
 # Check if Python is available
 if ! command -v python &> /dev/null; then
