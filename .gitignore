@@ -1,0 +1,19 @@
+# Environment variables
+.env
+.env.*
+
+# Test files
+test_*.csv
+test_*.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Logs
+*.log
+
+# Local development
+.vscode/
+.idea/ 

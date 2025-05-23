@@ -1,0 +1,22 @@
+{
+    "last_training": "2025-05-22T12:19:56.222815",
+    "n_samples": 9,
+    "feature_names": [
+        "btc_dominance",
+        "btc_price",
+        "btc_rsi",
+        "eth_price",
+        "eth_rsi",
+        "fear_greed",
+        "market_cap"
+    ],
+    "feature_importance": {
+        "btc_dominance": 0.0,
+        "btc_price": 0.0,
+        "btc_rsi": 0.0,
+        "eth_price": 0.0,
+        "eth_rsi": 0.0,
+        "fear_greed": 0.0,
+        "market_cap": 0.0
+    }
+}

@@ -1,0 +1,48 @@
+{
+    "api_keys": {
+        "openai": "YOUR_OPENAI_API_KEY",
+        "fred": "YOUR_FRED_API_KEY",
+        "alphavantage": "YOUR_ALPHAVANTAGE_API_KEY"
+    },
+    "telegram": {
+        "enabled": true,
+        "bot_token": "YOUR_BOT_TOKEN",
+        "chat_id": "YOUR_CHAT_ID",
+        "test": {
+            "enabled": true,
+            "bot_token": "YOUR_TEST_BOT_TOKEN",
+            "chat_id": "YOUR_TEST_CHAT_ID"
+        }
+    },
+    "ai_insights_enabled": true,
+    "storage": {
+        "file": "crypto_data_history.csv"
+    },
+    "api": {
+        "max_retries": 3,
+        "timeout": 10,
+        "backoff_factor": 2
+    },
+    "indicators": {
+        "include_macroeconomic": true,
+        "include_stock_indices": true,
+        "include_commodities": true,
+        "include_social_metrics": true
+    },
+    "ml": {
+        "enabled": true,
+        "model_directory": "models",
+        "retrain_interval_days": 7
+    },
+    "risk": {
+        "enabled": true,
+        "max_risk_per_trade": 0.02,
+        "risk_reward_ratio": 2,
+        "account_size": 10000
+    },
+    "test_mode": {
+        "enabled": false,
+        "send_telegram": false,
+        "output_prefix": "test_"
+    }
+}

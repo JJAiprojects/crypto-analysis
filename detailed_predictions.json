@@ -351,5 +351,140 @@
         },
         "validation_points": [],
         "final_accuracy": null
+    },
+    {
+        "date": "2025-05-23",
+        "session": "morning",
+        "timestamp": "2025-05-23 10:09:03",
+        "market_data": {
+            "btc_price": null,
+            "eth_price": null,
+            "btc_rsi": null,
+            "eth_rsi": null,
+            "fear_greed": 78
+        },
+        "predictions": {
+            "ai_prediction": "AI summary unavailable. Please add your OpenAI API key to config.json or set the OPENAI_API_KEY environment variable.",
+            "professional_analysis": {
+                "primary_scenario": "bullish",
+                "confidence_level": "medium",
+                "bullish_probability": 59.5,
+                "bearish_probability": 40.5,
+                "component_scores": {
+                    "price_action": 0.7,
+                    "volume_flow": 1.0,
+                    "volatility": 0.5,
+                    "momentum": 0.2,
+                    "funding_sentiment": 0.3,
+                    "macro_context": 0.7
+                },
+                "price_targets": {
+                    "current": 110799.87,
+                    "target_1": 106381.0,
+                    "target_2": 114220.0,
+                    "stop_loss": 108500.0,
+                    "expected_move": 2875.0
+                },
+                "key_factors": {
+                    "strongest_signal": [
+                        "volume_flow",
+                        1.0
+                    ],
+                    "weakest_signal": [
+                        "volatility",
+                        0.5
+                    ]
+                },
+                "risk_assessment": {
+                    "volatility_regime": "medium",
+                    "position_sizing": "normal",
+                    "time_decay": "12-hour window - reassess after"
+                },
+                "detailed_analysis": {
+                    "structure": {
+                        "bias": "bullish",
+                        "bias_strength": 0.7,
+                        "structure": {
+                            "trend_strength": 0.8,
+                            "support_strength": 0.3,
+                            "resistance_strength": 0.7,
+                            "breakout_probability": 0.7,
+                            "range_position": "upper_range"
+                        },
+                        "key_levels": {
+                            "support": 102612.5,
+                            "resistance": 111980.0,
+                            "current": 110799.87
+                        }
+                    },
+                    "volume": {
+                        "current_vs_avg": 15.873755843959678,
+                        "volume_trend": "increasing",
+                        "volume_strength": 1.0
+                    },
+                    "volatility": {
+                        "atr_percentage": 2.594319057285125,
+                        "volatility_score": 0.5,
+                        "expected_range_12h": {
+                            "conservative": 1437.2510714285718,
+                            "expected": 2874.5021428571436,
+                            "aggressive": 4311.753214285716
+                        },
+                        "volatility_regime": "medium",
+                        "breakout_threshold": 3449.4025714285726
+                    },
+                    "momentum": {
+                        "rsi_value": 71.88522216021748,
+                        "rsi_signal": "overbought",
+                        "rsi_strength": 0.09426110801087403,
+                        "momentum_score": 0.2,
+                        "reversal_probability": 0.09426110801087403
+                    },
+                    "sentiment": {
+                        "funding_rate": 0.007679,
+                        "funding_signal": "balanced",
+                        "funding_strength": 0.3,
+                        "fear_greed_index": 78,
+                        "fear_greed_signal": "extreme_greed",
+                        "sentiment_bias": "bearish",
+                        "combined_sentiment_score": 0.3
+                    },
+                    "macro": {
+                        "macro_bias": "risk_on",
+                        "macro_score": 0.7,
+                        "vix_level": 19.950000762939453,
+                        "risk_signals": [
+                            "risk_on"
+                        ],
+                        "environment": "supportive"
+                    }
+                }
+            },
+            "ml_predictions": {
+                "direction": {
+                    "prediction": "neutral",
+                    "confidence": 0.5
+                },
+                "price": {
+                    "prediction": 0,
+                    "confidence": 0.5
+                }
+            }
+        },
+        "risk_analysis": {
+            "risk_metrics": {
+                "prediction_confidence": 0.5,
+                "risk_score": 50
+            },
+            "position_sizes": {
+                "base_size": 150.0,
+                "adjusted_risk": 0.015,
+                "account_size": 10000.0
+            },
+            "stop_loss_levels": {},
+            "take_profit_levels": {}
+        },
+        "validation_points": [],
+        "final_accuracy": null
     }
 ]

@@ -7,21 +7,40 @@ import pandas as pd
 import time
 import concurrent.futures
 import yfinance as yf
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from bs4 import BeautifulSoup
 import re
 from openai import OpenAI
-from telegram_utils import send_telegram_message
+from telegram_utils import send_telegram_message, TelegramBot
+from ml_enhancer import PredictionEnhancer
+from risk_manager import RiskManager
+from professional_analysis import ProfessionalTraderAnalysis
+from dotenv import load_dotenv
 
 # ----------------------------
 # 1. Config
 # ----------------------------
 def load_config():
-    default_config = {
+    """Load configuration with proper handling of sensitive data"""
+    # Load environment variables
+    load_dotenv()
+    
+    # Initialize config with default values
+    config = {
         "api_keys": {
             "openai": "YOUR_OPENAI_API_KEY",
-            "fred": "YOUR_FRED_API_KEY",
+            "fred": "YOUR_FRED_API_KEY", 
             "alphavantage": "YOUR_ALPHAVANTAGE_API_KEY"
+        },
+        "telegram": {
+            "enabled": True,
+            "bot_token": "",
+            "chat_id": "",
+            "test": {
+                "enabled": True,
+                "bot_token": "",
+                "chat_id": ""
+            }
         },
         "ai_insights_enabled": True,
         "storage": {
@@ -37,29 +56,96 @@ def load_config():
             "include_stock_indices": True,
             "include_commodities": True,
             "include_social_metrics": True
+        },
+        "ml": {
+            "enabled": True,
+            "model_directory": "models",
+            "retrain_interval_days": 7
+        },
+        "risk": {
+            "enabled": True,
+            "max_risk_per_trade": 0.02,
+            "risk_reward_ratio": 2,
+            "account_size": 10000
+        },
+        "test_mode": {
+            "enabled": False,
+            "send_telegram": False,
+            "output_prefix": "test_"
         }
     }
+    
+    # Try to load existing config (non-sensitive settings only)
     if os.path.exists("config.json"):
         try:
             with open("config.json", "r") as f:
-                config = json.load(f)
-            for key, value in default_config.items():
-                if key not in config:
-                    config[key] = value
-            return config
+                existing_config = json.load(f)
+                # Update config with existing values while preserving structure
+                # BUT exclude sensitive data that should come from environment variables
+                for key, value in existing_config.items():
+                    if key in config:
+                        if key == "api_keys" or key == "telegram":
+                            # Skip sensitive data - don't override with config.json values
+                            continue
+                        elif isinstance(value, dict) and isinstance(config[key], dict):
+                            config[key].update(value)
+                        else:
+                            config[key] = value
         except Exception as e:
             print(f"[ERROR] Loading config: {e}")
-    with open("config.json", "w") as f:
-        json.dump(default_config, f, indent=4)
-        print("[INFO] Default config.json created. Please update your API key.")
-    return default_config
+    
+    # NOW load sensitive data from environment variables (this ensures they're never overwritten)
+    config["api_keys"]["openai"] = os.getenv("OPENAI_API_KEY", "YOUR_OPENAI_API_KEY")
+    config["api_keys"]["fred"] = os.getenv("FRED_API_KEY", "YOUR_FRED_API_KEY")
+    config["api_keys"]["alphavantage"] = os.getenv("ALPHAVANTAGE_API_KEY", "YOUR_ALPHAVANTAGE_API_KEY")
+    
+    config["telegram"]["bot_token"] = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    config["telegram"]["chat_id"] = os.getenv("TELEGRAM_CHAT_ID", "")
+    config["telegram"]["test"]["bot_token"] = os.getenv("TEST_TELEGRAM_BOT_TOKEN", "")
+    config["telegram"]["test"]["chat_id"] = os.getenv("TEST_TELEGRAM_CHAT_ID", "")
+    
+    # Create a safe version of config for saving (without sensitive data)
+    safe_config = config.copy()
+    safe_config["api_keys"] = {
+        "openai": "YOUR_OPENAI_API_KEY",
+        "fred": "YOUR_FRED_API_KEY",
+        "alphavantage": "YOUR_ALPHAVANTAGE_API_KEY"
+    }
+    safe_config["telegram"] = {
+        "enabled": config["telegram"]["enabled"],
+        "bot_token": "YOUR_BOT_TOKEN",
+        "chat_id": "YOUR_CHAT_ID",
+        "test": {
+            "enabled": config["telegram"]["test"]["enabled"],
+            "bot_token": "YOUR_TEST_BOT_TOKEN",
+            "chat_id": "YOUR_TEST_CHAT_ID"
+        }
+    }
+    
+    # Save the safe config (without sensitive data)
+    try:
+        with open("config.json", "w") as f:
+            json.dump(safe_config, f, indent=4)
+    except Exception as e:
+        print(f"[ERROR] Saving config: {e}")
+    
+    print(f"[INFO] Loaded config - Using environment variables for sensitive data")
+    print(f"[INFO] Telegram enabled: {config['telegram']['enabled']}")
+    print(f"[INFO] Test bot configured: {'Yes' if config['telegram']['test']['bot_token'] else 'No'}")
+    
+    return config
 
 config = load_config()
+
+# Initialize ML and Risk Management components
+ml_enhancer = PredictionEnhancer()
+risk_manager = RiskManager()
+professional_trader = ProfessionalTraderAnalysis()
 
 # ----------------------------
 # 2. API Request Handler
 # ----------------------------
-def resilient_request(url, params=None, max_retries=None, timeout=None):
+def resilient_request(url, params=None, headers=None, max_retries=None, timeout=None):
     if max_retries is None:
         max_retries = config["api"]["max_retries"]
     if timeout is None:
@@ -67,16 +153,52 @@ def resilient_request(url, params=None, max_retries=None, timeout=None):
     
     for attempt in range(max_retries):
         try:
-            response = requests.get(url, params=params, timeout=timeout)
+            response = requests.get(url, params=params, headers=headers, timeout=timeout)
             
+            # Log response headers for debugging
+            print(f"\n[DEBUG] API Response Headers for {url}:")
+            for header, value in response.headers.items():
+                print(f"  {header}: {value}")
+            
+            # Check for rate limiting
             if response.status_code == 429:
                 retry_after = int(response.headers.get("Retry-After", 60))
                 print(f"[WARN] Rate limited, waiting {retry_after}s (attempt {attempt+1}/{max_retries})")
                 time.sleep(retry_after)
                 continue
                 
+            # Check for other common status codes
+            if response.status_code == 403:
+                print(f"[ERROR] Access forbidden. Check if API endpoint is still valid: {url}")
+                return None
+            elif response.status_code == 404:
+                print(f"[ERROR] Endpoint not found: {url}")
+                return None
+            elif response.status_code == 500:
+                print(f"[ERROR] Server error from {url}")
+                time.sleep(5)  # Wait before retrying
+                continue
+            
+            # Check for remaining rate limits
+            remaining = response.headers.get("X-Rate-Limit-Remaining")
+            if remaining:
+                print(f"[INFO] Remaining API calls: {remaining}")
+                if int(remaining) < 10:
+                    print("[WARN] Low on remaining API calls!")
+                
             response.raise_for_status()
-            return response.json()
+            
+            # Check if response is valid JSON
+            try:
+                data = response.json()
+                if not data:
+                    print(f"[WARN] Empty response from {url}")
+                    return None
+                return data
+            except json.JSONDecodeError as e:
+                print(f"[ERROR] Invalid JSON response from {url}: {e}")
+                print(f"Response text: {response.text[:200]}...")  # Print first 200 chars of response
+                return None
             
         except requests.exceptions.RequestException as e:
             backoff = config["api"]["backoff_factor"] ** attempt
@@ -431,7 +553,14 @@ def get_crypto_social_metrics():
 def get_crypto_data():
     url = "https://api.coingecko.com/api/v3/simple/price"
     params = {"ids": "bitcoin,ethereum", "vs_currencies": "usd"}
-    data = resilient_request(url, params)
+    
+    # Add CoinGecko-specific headers
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "application/json"
+    }
+    
+    data = resilient_request(url, params=params, headers=headers)
     if data:
         return {"btc": data["bitcoin"]["usd"], "eth": data["ethereum"]["usd"]}
     return {"btc": None, "eth": None}
@@ -529,16 +658,50 @@ def get_technical_indicators():
     symbols = {"BTCUSDT": "BTC", "ETHUSDT": "ETH"}
     indicators = {}
     
+    print("\n[DEBUG] Starting technical analysis...")
+    
     for symbol, label in symbols.items():
         try:
-            data = resilient_request(url, {"symbol": symbol, "interval": "1d", "limit": 20})
+            print(f"\n[DEBUG] Analyzing {label}...")
+            
+            # Get more historical data for better analysis
+            params = {
+                "symbol": symbol,
+                "interval": "1d",
+                "limit": 50
+            }
+            
+            # Add Binance-specific headers
+            headers = {
+                "X-MBX-APIKEY": "",  # Empty for public endpoints
+                "User-Agent": "Mozilla/5.0"  # Add user agent to avoid some rate limits
+            }
+            
+            data = resilient_request(url, params=params, headers=headers)
             if not data:
+                print(f"[ERROR] No data received for {label}")
                 continue
                 
+            print(f"[DEBUG] Received {len(data)} candles for {label}")
+            
+            # Extract price data
             closes = [float(k[4]) for k in data]
+            highs = [float(k[2]) for k in data]
+            lows = [float(k[3]) for k in data]
+            volumes = [float(k[5]) for k in data]
+            
+            current_price = closes[-1]
+            print(f"[DEBUG] Current price: ${current_price:,.2f}")
+            
+            # Calculate moving averages
             sma7 = sum(closes[-7:]) / 7
             sma14 = sum(closes[-14:]) / 14
+            sma50 = sum(closes[-50:]) / 50 if len(closes) >= 50 else None
             
+            sma50_str = f"${sma50:,.2f}" if sma50 is not None else "N/A"
+            print(f"[DEBUG] Moving Averages - SMA7: ${sma7:,.2f}, SMA14: ${sma14:,.2f}, SMA50: {sma50_str}")
+            
+            # Calculate RSI
             changes = [closes[i] - closes[i-1] for i in range(1, len(closes))]
             gains = [max(0, c) for c in changes]
             losses = [max(0, -c) for c in changes]
@@ -547,35 +710,232 @@ def get_technical_indicators():
             rs = avg_gain / avg_loss if avg_loss != 0 else 1e10
             rsi = 100 - (100 / (1 + rs))
             
-            trend = "bullish" if sma7 > sma14 else "bearish"
+            print(f"[DEBUG] RSI: {rsi:.2f}")
             
+            # Calculate support and resistance levels
+            recent_highs = highs[-20:]
+            recent_lows = lows[-20:]
+            
+            # Find local maxima and minima
+            resistance_levels = []
+            support_levels = []
+            
+            for i in range(1, len(recent_highs)-1):
+                if recent_highs[i] > recent_highs[i-1] and recent_highs[i] > recent_highs[i+1]:
+                    resistance_levels.append(recent_highs[i])
+                if recent_lows[i] < recent_lows[i-1] and recent_lows[i] < recent_lows[i+1]:
+                    support_levels.append(recent_lows[i])
+            
+            # Get nearest support and resistance
+            nearest_support = max([s for s in support_levels if s < current_price], default=current_price * 0.95)
+            nearest_resistance = min([r for r in resistance_levels if r > current_price], default=current_price * 1.05)
+            
+            print(f"[DEBUG] Support: ${nearest_support:,.2f}, Resistance: ${nearest_resistance:,.2f}")
+            
+            # Calculate ATR for volatility
+            tr_values = []
+            for i in range(1, len(closes)):
+                tr = max(
+                    highs[i] - lows[i],
+                    abs(highs[i] - closes[i-1]),
+                    abs(lows[i] - closes[i-1])
+                )
+                tr_values.append(tr)
+            atr = sum(tr_values[-14:]) / 14
+            
+            print(f"[DEBUG] ATR: ${atr:,.2f}")
+            
+            # Determine trend with multiple confirmations
+            trend = "neutral"
+            if sma7 > sma14:
+                if sma50 and closes[-1] > sma50:
+                    trend = "bullish"
+                else:
+                    trend = "bullish_weak"
+            elif sma7 < sma14:
+                if sma50 and closes[-1] < sma50:
+                    trend = "bearish"
+                else:
+                    trend = "bearish_weak"
+            
+            print(f"[DEBUG] Trend: {trend}")
+            
+            # Determine RSI momentum zone
+            rsi_zone = "neutral"
+            if rsi > 60:
+                rsi_zone = "bullish"
+            elif rsi < 40:
+                rsi_zone = "bearish"
+            
+            print(f"[DEBUG] RSI Zone: {rsi_zone}")
+            
+            # Calculate volume trend
+            avg_volume = sum(volumes[-5:]) / 5
+            volume_trend = "increasing" if volumes[-1] > avg_volume * 1.2 else "decreasing" if volumes[-1] < avg_volume * 0.8 else "stable"
+            
+            print(f"[DEBUG] Volume Trend: {volume_trend}")
+            
+            # Generate signal with multiple confirmations
             signal = "NEUTRAL"
             signal_confidence = 0.0
             
+            # Base confidence on trend strength
+            if trend == "bullish":
+                base_confidence = 7.0
+            elif trend == "bullish_weak":
+                base_confidence = 5.0
+            elif trend == "bearish":
+                base_confidence = 7.0
+            elif trend == "bearish_weak":
+                base_confidence = 5.0
+            else:
+                base_confidence = 3.0
+            
+            # Adjust confidence based on RSI
             if rsi > 70:
-                signal = "SELL" if rsi > 75 else "STRONG SELL"
-                signal_confidence = (rsi - 70) * 4
+                rsi_factor = 1.2 if trend == "bearish" or trend == "bearish_weak" else 0.8
             elif rsi < 30:
-                signal = "BUY" if rsi < 25 else "STRONG BUY"
-                signal_confidence = (30 - rsi) * 4
-                
+                rsi_factor = 1.2 if trend == "bullish" or trend == "bullish_weak" else 0.8
+            else:
+                rsi_factor = 1.0
+            
+            # Adjust confidence based on volume
+            volume_factor = 1.2 if volume_trend == "increasing" else 0.8 if volume_trend == "decreasing" else 1.0
+            
+            # Calculate final confidence
+            signal_confidence = min(10, base_confidence * rsi_factor * volume_factor)
+            
+            # Generate signal based on all factors
+            if trend in ["bullish", "bullish_weak"]:
+                if rsi > 70:
+                    signal = "SELL"
+                elif rsi < 50:
+                    signal = "STRONG BUY"
+                else:
+                    signal = "BUY"
+            elif trend in ["bearish", "bearish_weak"]:
+                if rsi < 30:
+                    signal = "BUY"
+                elif rsi > 50:
+                    signal = "STRONG SELL"
+                else:
+                    signal = "SELL"
+            
+            print(f"[DEBUG] Signal: {signal} (Confidence: {signal_confidence:.1f})")
+            
+            # --- Enhanced TP/SL Logic ---
+            # Even tighter settings for higher leverage
+            leverage = 13.5  # midpoint of 12-15x
+            risk_per_trade = 0.03  # still 3%
+            strategy = "scalp"  # tightest stops/targets
+
+            # Determine trend bias
+            trend_bias = "with" if (
+                (signal in ["BUY", "STRONG BUY"] and trend.startswith("bull")) or
+                (signal in ["SELL", "STRONG SELL"] and trend.startswith("bear"))
+            ) else "against"
+
+            # Set RRR based on trend bias
+            rrr = 3 if trend_bias == "with" else 1.5
+
+            # Adjust ATR multipliers for leverage and strategy
+            if leverage >= 7:
+                sl_atr_mult = 1.0
+                tp_atr_mult = 2.0
+            else:
+                sl_atr_mult = 1.5
+                tp_atr_mult = 3.0
+            if strategy == "scalp":
+                sl_atr_mult *= 0.7
+                tp_atr_mult *= 0.7
+            elif strategy == "swing":
+                sl_atr_mult *= 1.2
+                tp_atr_mult *= 1.2
+
+            # Calculate SL/TP using ATR, RRR, and support/resistance
+            if signal in ["BUY", "STRONG BUY"]:
+                entry_low = nearest_support
+                entry_high = current_price
+                # SL: just below support, but not tighter than ATR-based
+                sl = min(entry_low - sl_atr_mult * atr, nearest_support * 0.98)
+                # TP: RRR * risk, but capped at resistance
+                risk = abs(entry_high - sl)
+                tp1 = min(entry_high + rrr * risk, nearest_resistance * 1.01)
+                tp2 = min(entry_high + (rrr+1) * risk, nearest_resistance * 1.02)
+            elif signal in ["SELL", "STRONG SELL"]:
+                entry_low = current_price
+                entry_high = nearest_resistance
+                # SL: just above resistance, but not tighter than ATR-based
+                sl = max(entry_high + sl_atr_mult * atr, nearest_resistance * 1.005)
+                # TP: RRR * risk, but capped at support
+                risk = abs(entry_low - sl)
+                tp1 = max(entry_low - rrr * risk, nearest_support * 0.99)
+                tp2 = max(entry_low - (rrr+1) * risk, nearest_support * 0.98)
+            else:
+                entry_low = current_price * 0.99
+                entry_high = current_price * 1.01
+                tp1 = current_price
+                tp2 = current_price
+                sl = current_price
+
+            print(f"[DEBUG] Entry Range: ${entry_low:,.2f} - ${entry_high:,.2f}")
+            print(f"[DEBUG] TP1: ${tp1:,.2f} (RRR: {rrr}x)")
+            print(f"[DEBUG] TP2: ${tp2:,.2f} (RRR: {rrr+1}x)")
+            print(f"[DEBUG] SL: ${sl:,.2f} (ATR/Support/Resistance based)")
+
+            # Calculate risk-reward ratio
+            if sl != current_price:  # Avoid division by zero
+                risk = abs(current_price - sl)
+                reward1 = abs(current_price - tp1)
+                reward2 = abs(current_price - tp2)
+                rrr1 = reward1 / risk if risk > 0 else 0
+                rrr2 = reward2 / risk if risk > 0 else 0
+                print(f"[DEBUG] Risk-Reward Ratio - TP1: {rrr1:.2f}, TP2: {rrr2:.2f}")
+            
+            # Calculate risk level based on volatility and confidence
+            volatility = "high" if atr > current_price * 0.03 else "medium" if atr > current_price * 0.015 else "low"
+            volatility_factor = 1.5 if volatility == "high" else 1.0 if volatility == "medium" else 0.5
+            risk_level = min(10, max(1, (volatility_factor * (signal_confidence / 10)) * 10))
+            
+            # Structure the indicators with key_levels
             indicators[label] = {
                 "price": closes[-1],
                 "sma7": sma7,
                 "sma14": sma14,
+                "sma50": sma50,
                 "rsi14": rsi,
                 "trend": trend,
+                "rsi_zone": rsi_zone,
+                "volume_trend": volume_trend,
                 "signal": signal,
-                "signal_confidence": signal_confidence
+                "signal_confidence": signal_confidence,
+                "support": nearest_support,
+                "resistance": nearest_resistance,
+                "atr": atr,
+                "volatility": volatility,
+                "risk_level": risk_level,
+                "key_levels": {
+                    "entry_range": f"${entry_low:,.0f} - ${entry_high:,.0f}",
+                    "tp1": tp1,
+                    "tp2": tp2,
+                    "sl": sl,
+                    "rrr1": rrr1 if 'rrr1' in locals() else None,
+                    "rrr2": rrr2 if 'rrr2' in locals() else None
+                }
             }
             
+            # Add individual indicators for easy access
             indicators[f"{label.lower()}_rsi"] = rsi
             indicators[f"{label.lower()}_trend"] = trend
             indicators[f"{label.lower()}_signal"] = signal
             indicators[f"{label.lower()}_signal_confidence"] = signal_confidence
+            indicators[f"{label.lower()}_support"] = nearest_support
+            indicators[f"{label.lower()}_resistance"] = nearest_resistance
             
         except Exception as e:
             print(f"[ERROR] Technicals {label}: {e}")
+            import traceback
+            traceback.print_exc()
     
     return indicators
 
@@ -653,7 +1013,7 @@ def collect_all_data():
         "btc_dominance": get_btc_dominance,
         "market_cap": get_global_market_cap,
         "volumes": get_trading_volumes,
-        "technicals": get_technical_indicators,
+        "technical_indicators": get_technical_indicators,
         "levels": get_support_resistance_levels,
         "historical_data": get_historical_price_data
     }
@@ -687,6 +1047,35 @@ def collect_all_data():
                 print(f"[ERROR] Task {task_name} failed: {e}")
                 results[task_name] = None
     
+    # Print collected data for verification
+    print("\n[INFO] Collected Market Data:")
+    essential_data = {
+        'crypto': results.get('crypto', {}),
+        'btc_dominance': results.get('btc_dominance'),
+        'market_cap': results.get('market_cap'),
+        'fear_greed': results.get('fear_greed', {}),
+        'technical_indicators': results.get('technical_indicators', {}),
+        'levels': results.get('levels', {}),
+        'futures': {
+            'BTC': results.get('futures', {}).get('BTC', {}),
+            'ETH': results.get('futures', {}).get('ETH', {})
+        }
+    }
+    
+    for key, value in essential_data.items():
+        if value is not None:
+            print(f"\n{key.upper()}:")
+            if isinstance(value, dict):
+                for subkey, subvalue in value.items():
+                    if isinstance(subvalue, dict):
+                        print(f"  {subkey}:")
+                        for k, v in subvalue.items():
+                            print(f"    {k}: {v}")
+                    else:
+                        print(f"  {subkey}: {subvalue}")
+            else:
+                print(f"  {value}")
+    
     return results
 
 # ----------------------------
@@ -699,7 +1088,11 @@ def save_today_data(all_data):
     current_hour = datetime.now().hour
     session = "morning" if current_hour < 15 else "evening"
     
+    # Use test file if in test mode
     file = config["storage"]["file"]
+    if config["test_mode"]["enabled"]:
+        file = config["test_mode"]["output_prefix"] + file
+        print(f"[TEST] Using test data file: {file}")
     
     crypto = all_data.get("crypto", {})
     futures = all_data.get("futures", {})
@@ -859,11 +1252,66 @@ def save_prediction(prediction, data):
         print(f"[ERROR] Saving prediction: {e}")
 
 def save_detailed_prediction(prediction_data, market_data):
-    """Save structured prediction with detailed metrics"""
+    """Save structured prediction with detailed metrics and risk analysis"""
+    # Use test file if in test mode
     prediction_file = "detailed_predictions.json"
+    if config["test_mode"]["enabled"]:
+        prediction_file = config["test_mode"]["output_prefix"] + prediction_file
+        print(f"[TEST] Using test prediction file: {prediction_file}")
+    
     today = datetime.now().strftime("%Y-%m-%d")
     current_hour = datetime.now().hour
     session = "morning" if current_hour < 15 else "evening"
+    
+    # Get professional trader analysis
+    pro_analysis = {}
+    try:
+        pro_analysis = professional_trader.generate_probabilistic_forecast(market_data)
+        print(f"[INFO] Professional analysis completed: {pro_analysis.get('primary_scenario', 'Unknown')} scenario")
+    except Exception as e:
+        print(f"[ERROR] Professional analysis failed: {e}")
+    
+    # Get ML predictions if enabled
+    ml_predictions = {}
+    if config["ml"]["enabled"]:
+        try:
+            ml_predictions = ml_enhancer.predict(market_data)
+        except Exception as e:
+            print(f"[ERROR] ML prediction failed: {e}")
+    
+    # Get risk analysis if enabled
+    risk_analysis = {}
+    if config["risk"]["enabled"] and ml_predictions:
+        try:
+            # Update risk metrics
+            prediction_confidence = ml_predictions.get('direction', {}).get('confidence', 0.5)
+            risk_manager.update_risk_metrics(market_data, prediction_confidence)
+            
+            # Calculate position size
+            position_size = risk_manager.calculate_position_size(
+                config["risk"]["account_size"],
+                config["risk"]["max_risk_per_trade"]
+            )
+            
+            # Calculate stop loss and take profit levels
+            if 'btc_price' in market_data:
+                entry_price = market_data['btc_price']
+                direction = 'long' if ml_predictions.get('direction', {}).get('prediction') == 'rally' else 'short'
+                
+                stop_loss = risk_manager.calculate_stop_loss(entry_price, direction)
+                take_profit = risk_manager.calculate_take_profit(
+                    entry_price,
+                    direction,
+                    config["risk"]["risk_reward_ratio"]
+                )
+            
+            risk_analysis = risk_manager.get_risk_summary()
+        except Exception as e:
+            print(f"[ERROR] Risk analysis failed: {e}")
+    
+    # Extract fear & greed index from dictionary
+    fear_greed_data = market_data.get("fear_greed", {})
+    fear_greed_index = fear_greed_data.get("index") if isinstance(fear_greed_data, dict) else fear_greed_data
     
     # Create a structured prediction record
     prediction_record = {
@@ -875,11 +1323,16 @@ def save_detailed_prediction(prediction_data, market_data):
             "eth_price": float(market_data.get("eth_price")) if pd.notna(market_data.get("eth_price")) else None,
             "btc_rsi": float(market_data.get("btc_rsi")) if pd.notna(market_data.get("btc_rsi")) else None,
             "eth_rsi": float(market_data.get("eth_rsi")) if pd.notna(market_data.get("eth_rsi")) else None,
-            "fear_greed": int(market_data.get("fear_greed")) if pd.notna(market_data.get("fear_greed")) else None,
+            "fear_greed": int(fear_greed_index) if pd.notna(fear_greed_index) else None,
         },
-        "predictions": prediction_data,
-        "validation_points": [],  # To be filled by validation script
-        "final_accuracy": None    # To be determined later
+        "predictions": {
+            "ai_prediction": prediction_data,
+            "professional_analysis": pro_analysis,
+            "ml_predictions": ml_predictions
+        },
+        "risk_analysis": risk_analysis,
+        "validation_points": [],
+        "final_accuracy": None
     }
     
     # Load existing predictions
@@ -920,13 +1373,11 @@ def get_prediction_accuracy():
             with open(prediction_file, "r") as f:
                 predictions = json.load(f)
         except json.JSONDecodeError:
-            # If file is corrupted, create a new one
             print("[WARN] Prediction history file is corrupted. Creating a new one.")
             with open(prediction_file, "w") as f:
                 json.dump([], f)
             return "Prediction history was reset due to file corruption. No previous predictions available."
         
-        # If predictions file is empty or invalid
         if not predictions or not isinstance(predictions, list):
             return "No valid previous predictions available yet."
         
@@ -942,24 +1393,21 @@ def get_prediction_accuracy():
         
         for pred in predictions:
             pred_date = pred["date"]
-            pred_session = pred.get("session", "unknown")  # Handle older entries without session
+            pred_session = pred.get("session", "unknown")
             
             # Skip current session's predictions (too recent)
             if pred_date == today and pred_session == current_session:
                 continue
                 
-            # For morning predictions on the same day, compare with evening data
+            # For morning predictions, compare with evening data
             if pred_date == today and pred_session == "morning" and current_session == "evening":
-                # Current evening data is our comparison point
                 current_data = df[(df['date'] == today) & (df['session'] == "evening")]
                 if len(current_data) > 0:
                     current_row = current_data.iloc[0]
                     
-                    # Get prediction and actual values
                     pred_btc = pred["btc_price"]
                     actual_btc = current_row["btc_price"]
                     
-                    # Check if prediction was correct (intraday prediction)
                     direction = "UNKNOWN"
                     if pred_btc is not None and actual_btc is not None:
                         if "rally" in pred["prediction"].lower() and actual_btc > pred_btc:
@@ -977,70 +1425,38 @@ def get_prediction_accuracy():
                         "btc_at_prediction": pred_btc,
                         "btc_actual": actual_btc,
                         "direction": direction,
-                        "timeframe": "Intraday (AM to PM)"
+                        "timeframe": "12-hour (AM to PM)"
                     })
             
-            # For older predictions, look for subsequent sessions
-            else:
-                # Find the next 2-3 data points after this prediction
-                if "session" in df.columns:
-                    # For newer data with session column
-                    query_mask = ((df['date'] > pred_date) | 
-                                 ((df['date'] == pred_date) & 
-                                  (df['session'] != pred_session)))
-                    subsequent_data = df[query_mask].sort_values(by=['date', 'session']).head(3)
-                else:
-                    # For older data without session column
-                    subsequent_data = df[df['date'] > pred_date].head(2)
-                
-                if len(subsequent_data) > 0:
-                    # We have data to compare with prediction
-                    next_data = subsequent_data.iloc[0] if len(subsequent_data) > 0 else None
-                    second_data = subsequent_data.iloc[1] if len(subsequent_data) > 1 else None
-                    third_data = subsequent_data.iloc[2] if len(subsequent_data) > 2 else None
+            # For evening predictions, compare with next morning data
+            elif pred_date == today and pred_session == "evening":
+                next_morning = df[(df['date'] > pred_date) | 
+                                ((df['date'] == pred_date) & (df['session'] == "morning"))].head(1)
+                if len(next_morning) > 0:
+                    next_row = next_morning.iloc[0]
                     
-                    # Extract values for comparison
                     pred_btc = pred["btc_price"]
-                    next_btc = next_data["btc_price"] if next_data is not None else None
-                    second_btc = second_data["btc_price"] if second_data is not None else None
-                    third_btc = third_data["btc_price"] if third_data is not None else None
+                    actual_btc = next_row["btc_price"]
                     
-                    # Determine timeframe based on sessions
-                    if "session" in df.columns and next_data is not None:
-                        if pred_date == next_data["date"]:
-                            timeframe = "Intraday (AM to PM)"
-                        elif pred_session == "evening" and next_data["session"] == "morning":
-                            timeframe = "Overnight"
-                        else:
-                            timeframe = "24-48 hours"
-                    else:
-                        timeframe = "24-48 hours"
-                    
-                    # Check if prediction was directionally correct 
-                    if pred_btc is not None and next_btc is not None:
-                        if "rally" in pred["prediction"].lower() and next_btc > pred_btc:
+                    direction = "UNKNOWN"
+                    if pred_btc is not None and actual_btc is not None:
+                        if "rally" in pred["prediction"].lower() and actual_btc > pred_btc:
                             direction = "CORRECT"
-                        elif "dip" in pred["prediction"].lower() and next_btc < pred_btc:
+                        elif "dip" in pred["prediction"].lower() and actual_btc < pred_btc:
                             direction = "CORRECT"
-                        elif "stagnation" in pred["prediction"].lower() and abs(next_btc - pred_btc) / pred_btc < 0.02:
+                        elif "stagnation" in pred["prediction"].lower() and abs(actual_btc - pred_btc) / pred_btc < 0.01:
                             direction = "CORRECT"
                         else:
                             direction = "INCORRECT"
-                    else:
-                        direction = "UNKNOWN"
                     
-                    result = {
-                        "prediction_date": f"{pred_date} ({pred_session if 'session' in pred else 'all-day'})",
+                    results.append({
+                        "prediction_date": f"{pred_date} ({pred_session})",
                         "prediction_summary": pred["prediction"][:100] + "..." if pred["prediction"] and len(pred["prediction"]) > 100 else pred["prediction"],
                         "btc_at_prediction": pred_btc,
-                        "btc_actual": next_btc,
-                        "btc_second_point": second_btc,
-                        "btc_third_point": third_btc,
+                        "btc_actual": actual_btc,
                         "direction": direction,
-                        "timeframe": timeframe
-                    }
-                    
-                    results.append(result)
+                        "timeframe": "12-hour (PM to AM)"
+                    })
         
         if not results:
             return "No predictions old enough for comparison yet."
@@ -1059,17 +1475,12 @@ def get_prediction_accuracy():
                 change = ((result['btc_actual'] - result['btc_at_prediction']) / result['btc_at_prediction']) * 100
                 output += f"BTC actual: ${result['btc_actual']:.2f} ({change:.2f}%)\n"
                 
-            if result.get('btc_second_point') is not None and result['btc_at_prediction'] is not None:
-                change = ((result['btc_second_point'] - result['btc_at_prediction']) / result['btc_at_prediction']) * 100
-                output += f"BTC later point: ${result['btc_second_point']:.2f} ({change:.2f}%)\n"
-                
             output += f"Directional Accuracy: {result['direction']}\n\n"
             
         return output
             
     except Exception as e:
         print(f"[ERROR] Analyzing prediction accuracy: {e}")
-        # In case of unexpected error, reset the file
         try:
             with open(prediction_file, "w") as f:
                 json.dump([], f)
@@ -1081,7 +1492,7 @@ def get_prediction_accuracy():
 # ----------------------------
 # 6. GPT Market Insight
 # ----------------------------
-def ask_ai(prompt):
+def ask_ai(market_data):
     # First check for environment variable, then fallback to config file
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
@@ -1089,469 +1500,611 @@ def ask_ai(prompt):
     
     if not api_key or api_key == "YOUR_OPENAI_API_KEY":
         return "AI summary unavailable. Please add your OpenAI API key to config.json or set the OPENAI_API_KEY environment variable."
-        
+    
+    # Generate professional trader analysis
+    print("\n[INFO] Running professional trader analysis...")
+    pro_analysis = professional_trader.generate_probabilistic_forecast(market_data)
+    
+    if "error" in pro_analysis:
+        return f"Professional analysis unavailable: {pro_analysis['error']}"
+    
+    # Determine if this is a morning or evening prediction
+    current_hour = datetime.now().hour
+    session = "morning" if current_hour < 15 else "evening"
+    timeframe = "next 12 hours" if session == "morning" else "overnight and early morning"
+    
+    # Create detailed market context for AI
+    btc_data = market_data.get('technical_indicators', {}).get('BTC', {})
+    fear_greed = market_data.get('fear_greed', {})
+    futures = market_data.get('futures', {}).get('BTC', {})
+    
+    # Enhanced prompt with professional analysis
+    enhanced_prompt = f"""You are a professional cryptocurrency trader with 10+ years of experience. Analyze the following comprehensive market data and provide a detailed 12-hour forecast for BTC.
+
+=== PROFESSIONAL ANALYSIS SUMMARY ===
+Primary Scenario: {pro_analysis['primary_scenario'].upper()} ({pro_analysis['confidence_level']} confidence)
+Bullish Probability: {pro_analysis['bullish_probability']}%
+Bearish Probability: {pro_analysis['bearish_probability']}%
+
+Current Price: ${pro_analysis['price_targets']['current']:,.0f}
+Target 1: ${pro_analysis['price_targets']['target_1']:,.0f}
+Target 2: ${pro_analysis['price_targets']['target_2']:,.0f}
+Stop Loss: ${pro_analysis['price_targets']['stop_loss']:,.0f}
+Expected Move: ${pro_analysis['price_targets']['expected_move']:,.0f}
+
+=== COMPONENT ANALYSIS ===
+Price Action Score: {pro_analysis['component_scores']['price_action']:.2f}
+Volume Flow Score: {pro_analysis['component_scores']['volume_flow']:.2f}
+Volatility Score: {pro_analysis['component_scores']['volatility']:.2f}
+Momentum Score: {pro_analysis['component_scores']['momentum']:.2f}
+Funding/Sentiment Score: {pro_analysis['component_scores']['funding_sentiment']:.2f}
+Macro Context Score: {pro_analysis['component_scores']['macro_context']:.2f}
+
+Strongest Signal: {pro_analysis['key_factors']['strongest_signal'][0]} ({pro_analysis['key_factors']['strongest_signal'][1]:.2f})
+Volatility Regime: {pro_analysis['risk_assessment']['volatility_regime']}
+
+=== DETAILED MARKET DATA ===
+BTC Price: ${btc_data.get('price', 0):,.0f}
+Support: ${btc_data.get('support', 0):,.0f}
+Resistance: ${btc_data.get('resistance', 0):,.0f}
+RSI: {btc_data.get('rsi14', 0):.1f}
+Trend: {btc_data.get('trend', 'unknown')}
+ATR: ${btc_data.get('atr', 0):,.0f}
+
+Funding Rate: {futures.get('funding_rate', 0)*100:.3f}%
+Open Interest: ${futures.get('open_interest', 0):,.0f}
+Long/Short Ratio: {futures.get('long_ratio', 0):.2f}/{futures.get('short_ratio', 0):.2f}
+
+Fear & Greed Index: {fear_greed.get('index', 50) if isinstance(fear_greed, dict) else 50}
+BTC Dominance: {market_data.get('btc_dominance', 0):.1f}%
+
+=== YOUR TASK ===
+As a professional trader, provide your analysis for the {timeframe} in this structure:
+
+**EXECUTIVE SUMMARY**
+- Primary thesis and confidence level
+- Key risk factors to monitor
+
+**TECHNICAL ANALYSIS**
+- Market structure assessment
+- Key levels and price action
+- Volume analysis
+
+**SENTIMENT & POSITIONING**
+- Funding rate implications
+- Fear/greed assessment
+- Crowd positioning
+
+**TRADING PLAN**
+- Entry strategy and levels
+- Take profit targets with rationale
+- Stop loss placement
+- Position sizing recommendation
+- Risk/reward analysis
+
+**SCENARIO PLANNING**
+- Primary scenario (probability)
+- Alternative scenario (probability)
+- Invalidation levels
+
+Keep your analysis concise, professional, and actionable. Focus on the highest probability outcomes based on the data convergence."""
+
     try:
         client = OpenAI(api_key=api_key)
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.4
+            messages=[{"role": "user", "content": enhanced_prompt}],
+            temperature=0.3,  # Lower temperature for more focused analysis
+            max_tokens=1500   # Allow for detailed response
         )
         return response.choices[0].message.content
     except Exception as e:
         print(f"[ERROR] GPT call failed: {e}")
         return f"AI summary unavailable: {str(e)}"
 
-# ----------------------------
-# 7. Main Script
-# ----------------------------
-if __name__ == "__main__":
-    print("=== ✅ Starting Market Crypto Summary ===\n")
+def train_ml_models():
+    """Train machine learning models on historical data"""
+    if not config["ml"]["enabled"]:
+        return
     
-    all_data = collect_all_data()
+    try:
+        # Create model directory if it doesn't exist
+        model_dir = config["ml"]["model_directory"]
+        if not os.path.exists(model_dir):
+            os.makedirs(model_dir)
+            print(f"[INFO] Created model directory: {model_dir}")
+        
+        # Load historical data
+        df = pd.read_csv(config["storage"]["file"])
+        
+        # Load prediction history
+        prediction_file = "detailed_predictions.json"
+        if os.path.exists(prediction_file):
+            with open(prediction_file, "r") as f:
+                prediction_history = json.load(f)
+        else:
+            prediction_history = []
+            print("[WARN] No prediction history found. Starting with empty history.")
+        
+        # Train models
+        ml_enhancer.train_models(df, prediction_history)
+        
+        # Save trained models
+        ml_enhancer.save_models(model_dir)
+        
+        # Save training metrics
+        metrics = {
+            'last_training': datetime.now().isoformat(),
+            'data_points': len(df),
+            'prediction_history_size': len(prediction_history)
+        }
+        with open(f"{model_dir}/model_metrics.json", "w") as f:
+            json.dump(metrics, f, indent=4)
+        
+        print("[INFO] ML models trained and saved successfully")
+    except Exception as e:
+        print(f"[ERROR] Training ML models: {e}")
+        import traceback
+        traceback.print_exc()
+
+def should_retrain_models():
+    """Check if models should be retrained based on config settings"""
+    if not config["ml"]["enabled"]:
+        return False
     
-    # Extract data for display
-    crypto = all_data.get("crypto", {})
-    technicals = all_data.get("technicals", {})
-    levels = all_data.get("levels", {})
-    fear = all_data.get("fear_greed", {})
-    dominance = all_data.get("btc_dominance")
-    market_cap, market_cap_change = all_data.get("market_cap", (None, None))
-    volumes = all_data.get("volumes", {})
-    futures = all_data.get("futures", {})
+    model_dir = config["ml"]["model_directory"]
+    if not os.path.exists(model_dir):
+        return True
     
-    # ------------------------------------
-    # Display ALL collected data with [DATA] prefix
-    # ------------------------------------
-    print("\n=== 📊 Crypto Market Data ===")
-    print(f"[DATA] BTC: ${crypto.get('btc')}, ETH: ${crypto.get('eth')}")
+    # Check if any model files are missing
+    required_files = ['direction_model.joblib', 'price_model.joblib', 'scaler.joblib']
+    if not all(os.path.exists(f"{model_dir}/{f}") for f in required_files):
+        return True
     
-    if "BTC" in technicals:
-        btc_tech = technicals["BTC"]
-        btc_lvl = levels.get("BTC", {})
-        print(f"[DATA] BTC RSI: {btc_tech['rsi14']:.1f}, Trend: {btc_tech['trend'].upper()}, " + 
-              f"Signal: {btc_tech['signal']} (Confidence: {btc_tech['signal_confidence']:.1f})")
-        print(f"[DATA] BTC Support: ${btc_lvl.get('support', 'N/A'):.0f}, " + 
-              f"Resistance: ${btc_lvl.get('resistance', 'N/A'):.0f}")
+    # Check last training time
+    try:
+        with open(f"{model_dir}/model_metrics.json", "r") as f:
+            metrics = json.load(f)
+            last_training = datetime.fromisoformat(metrics.get('last_training', '2000-01-01'))
+            days_since_training = (datetime.now() - last_training).days
+            return days_since_training >= config["ml"]["retrain_interval_days"]
+    except Exception:
+        return True
+
+def calculate_percentage(current, target):
+    """Calculate percentage change between current and target price"""
+    if not current or not target or current == 0:
+        return 0
+    return round(abs((target - current) / current * 100), 1)  # Round to 1 decimal place
+
+def calculate_trading_confidence(price, support, resistance, rsi, trend, signal, volume_trend, atr, funding_rate=None, fear_greed=None):
+    """Calculate trading confidence based on confluence scoring system"""
+    confidence_score = 0
+    max_score = 8
     
-    if "ETH" in technicals:
-        eth_tech = technicals["ETH"]
-        eth_lvl = levels.get("ETH", {})
-        print(f"[DATA] ETH RSI: {eth_tech['rsi14']:.1f}, Trend: {eth_tech['trend'].upper()}, " + 
-              f"Signal: {eth_tech['signal']} (Confidence: {eth_tech['signal_confidence']:.1f})")
-        print(f"[DATA] ETH Support: ${eth_lvl.get('support', 'N/A'):.0f}, " + 
-              f"Resistance: ${eth_lvl.get('resistance', 'N/A'):.0f}")
+    # 1. Trend Bias (Uptrend on 1H & 4H timeframes)
+    if trend and trend.lower() in ['bullish', 'bearish']:
+        if (signal in ['BUY', 'STRONG BUY'] and 'bullish' in trend.lower()) or \
+           (signal in ['SELL', 'STRONG SELL'] and 'bearish' in trend.lower()):
+            confidence_score += 1
     
-    print(f"[DATA] BTC Dominance: {dominance:.2f}%" if dominance else "[DATA] BTC Dominance: N/A")
-    print(f"[DATA] Fear & Greed Index: {fear.get('index')} ({fear.get('sentiment')})" if fear.get('index') else "[DATA] Fear & Greed Index: N/A")
+    # 2. Support/Resistance (Entry near major S/R levels)
+    if support and resistance and price:
+        # Check if price is near support (for buys) or resistance (for sells)
+        support_distance = abs(price - support) / price
+        resistance_distance = abs(price - resistance) / price
+        
+        if signal in ['BUY', 'STRONG BUY'] and support_distance < 0.02:  # Within 2% of support
+            confidence_score += 1
+        elif signal in ['SELL', 'STRONG SELL'] and resistance_distance < 0.02:  # Within 2% of resistance
+            confidence_score += 1
     
-    if market_cap and market_cap_change:
-        print(f"[DATA] Market Cap: ${market_cap/1e12:.2f}T ({market_cap_change:.2f}% 24h)")
+    # 3. RSI (Bullish divergence/momentum vs oversold/overbought)
+    if rsi:
+        if signal in ['BUY', 'STRONG BUY'] and (rsi < 40 or (rsi < 60 and rsi > 40)):  # Oversold or neutral-bullish
+            confidence_score += 1
+        elif signal in ['SELL', 'STRONG SELL'] and (rsi > 60 or (rsi > 40 and rsi < 70)):  # Overbought or neutral-bearish
+            confidence_score += 1
     
-    # Display trading volumes
-    if volumes.get("btc_volume"):
-        print(f"[DATA] BTC 24h Volume: ${volumes.get('btc_volume')/1e9:.2f}B")
-    if volumes.get("eth_volume"):
-        print(f"[DATA] ETH 24h Volume: ${volumes.get('eth_volume')/1e9:.2f}B")
+    # 4. Volume (Increasing on breakout)
+    if volume_trend:
+        if volume_trend.lower() == 'increasing':
+            confidence_score += 1
     
-    # Display futures data
-    if "BTC" in futures:
-        btc_futures = futures["BTC"]
-        print(f"[DATA] BTC Funding Rate: {btc_futures.get('funding_rate'):.4f}%")
-        if btc_futures.get('long_ratio') and btc_futures.get('short_ratio'):
-            print(f"[DATA] BTC Long/Short Ratio: {btc_futures.get('long_ratio'):.2f}/{btc_futures.get('short_ratio'):.2f}")
-        if btc_futures.get('open_interest'):
-            print(f"[DATA] BTC Open Interest: ${btc_futures.get('open_interest')/1e9:.2f}B")
+    # 5. Funding Rate (Neutral or opposite crowd bias)
+    if funding_rate is not None:
+        # Contrarian approach: negative funding (shorts paying) supports long signals
+        if signal in ['BUY', 'STRONG BUY'] and funding_rate < 0:
+            confidence_score += 1
+        elif signal in ['SELL', 'STRONG SELL'] and funding_rate > 0.01:  # High positive funding
+            confidence_score += 1
     
-    if "ETH" in futures:
-        eth_futures = futures["ETH"]
-        print(f"[DATA] ETH Funding Rate: {eth_futures.get('funding_rate'):.4f}%")
-        if eth_futures.get('long_ratio') and eth_futures.get('short_ratio'):
-            print(f"[DATA] ETH Long/Short Ratio: {eth_futures.get('long_ratio'):.2f}/{eth_futures.get('short_ratio'):.2f}")
-        if eth_futures.get('open_interest'):
-            print(f"[DATA] ETH Open Interest: ${eth_futures.get('open_interest')/1e9:.2f}B")
+    # 6. Volatility/ATR (Enough room to TP before SL zone)
+    if atr and price and support and resistance:
+        price_range = resistance - support
+        if atr < price_range * 0.3:  # ATR is reasonable compared to S/R range
+            confidence_score += 1
     
-    # Display macroeconomic data
-    print("\n=== 📈 Macroeconomic Data ===")
-    m2_data = all_data.get("m2_supply", {})
-    if m2_data and m2_data.get("m2_supply"):
-        print(f"[DATA] M2 Money Supply: ${m2_data.get('m2_supply')/1e12:.2f}T ({m2_data.get('m2_date')})")
+    # 7. Sentiment (Low retail euphoria for contrarian plays)
+    if fear_greed is not None:
+        if signal in ['BUY', 'STRONG BUY'] and fear_greed < 40:  # Fear supports buying
+            confidence_score += 1
+        elif signal in ['SELL', 'STRONG SELL'] and fear_greed > 70:  # Greed supports selling
+            confidence_score += 1
     
-    inflation_data = all_data.get("inflation", {})
-    if inflation_data and inflation_data.get("inflation_rate"):
-        print(f"[DATA] Inflation Rate: {inflation_data.get('inflation_rate'):.2f}% ({inflation_data.get('inflation_date')})")
+    # 8. Price Action (Clean breakout/pattern)
+    if price and support and resistance:
+        # Check for clean position relative to S/R
+        if signal in ['BUY', 'STRONG BUY'] and price > support * 1.005:  # Above support
+            confidence_score += 1
+        elif signal in ['SELL', 'STRONG SELL'] and price < resistance * 0.995:  # Below resistance
+            confidence_score += 1
     
-    interest_data = all_data.get("interest_rates", {})
-    if interest_data:
-        if interest_data.get("fed_rate"):
-            print(f"[DATA] Fed Funds Rate: {interest_data.get('fed_rate'):.2f}%")
-        if interest_data.get("t10_yield"):
-            print(f"[DATA] 10-Year Treasury Yield: {interest_data.get('t10_yield'):.2f}%")
-        if interest_data.get("t5_yield"):
-            print(f"[DATA] 5-Year Treasury Yield: {interest_data.get('t5_yield'):.2f}%")
+    # Normalize to percentage
+    confidence_percentage = (confidence_score / max_score) * 100
     
-    # Display stock indices
-    indices = all_data.get("stock_indices", {})
-    if indices:
-        print("\n=== 🏢 Stock Market Indices ===")
-        if "sp500" in indices:
-            print(f"[DATA] S&P 500: {indices['sp500']:.2f} " + 
-                  f"({indices.get('sp500_change', 0):.2f}%)" if indices.get('sp500_change') else "")
-        if "dow_jones" in indices:
-            print(f"[DATA] Dow Jones: {indices['dow_jones']:.2f} " + 
-                  f"({indices.get('dow_jones_change', 0):.2f}%)" if indices.get('dow_jones_change') else "")
-        if "nasdaq" in indices:
-            print(f"[DATA] NASDAQ: {indices['nasdaq']:.2f} " + 
-                  f"({indices.get('nasdaq_change', 0):.2f}%)" if indices.get('nasdaq_change') else "")
-        if "vix" in indices:
-            print(f"[DATA] VIX (Volatility): {indices['vix']:.2f}")
+    # Determine confidence level and guidance
+    if confidence_percentage >= 70:
+        level = "HIGH"
+        guidance = "Full position, standard TP/SL"
+    elif confidence_percentage >= 50:
+        level = "MEDIUM" 
+        guidance = "Partial position, tight management"
+    else:
+        level = "LOW"
+        guidance = "Skip or scalp with tight stops"
     
-    # Display commodity prices
-    commodities = all_data.get("commodities", {})
-    if commodities:
-        print("\n=== 🥇 Commodity Prices ===")
-        if "gold" in commodities:
-            print(f"[DATA] Gold: ${commodities['gold']:.2f}")
-        if "silver" in commodities:
-            print(f"[DATA] Silver: ${commodities['silver']:.2f}")
-        if "crude_oil" in commodities:
-            print(f"[DATA] Crude Oil: ${commodities['crude_oil']:.2f}")
-        if "natural_gas" in commodities:
-            print(f"[DATA] Natural Gas: ${commodities['natural_gas']:.2f}")
-    
-    # Display social metrics
-    social = all_data.get("social_metrics", {})
-    if social:
-        print("\n=== 👥 Social Metrics ===")
-        if "forum_posts" in social:
-            print(f"[DATA] Forum Posts: {social['forum_posts']:,}")
-        if "forum_topics" in social:
-            print(f"[DATA] Forum Topics: {social['forum_topics']:,}")
-        if "btc_github_stars" in social:
-            print(f"[DATA] BTC GitHub Stars: {social['btc_github_stars']:,}")
-        if "eth_github_stars" in social:
-            print(f"[DATA] ETH GitHub Stars: {social['eth_github_stars']:,}")
-        if "btc_recent_commits" in social:
-            print(f"[DATA] BTC Recent Commits: {social['btc_recent_commits']:,}")
-        if "eth_recent_commits" in social:
-            print(f"[DATA] ETH Recent Commits: {social['eth_recent_commits']:,}")
-    
-    print("\n=== 💾 Data Storage ===")
-    # Save to file
-    save_today_data(all_data)
-    
-    # AI Insights
-    if config.get("ai_insights_enabled"):
-        try:
-            file = config["storage"]["file"]
-            if not os.path.exists(file):
-                print("\n[WARN] No historical data available for AI insights")
+    return {
+        'score': confidence_score,
+        'max_score': max_score,
+        'percentage': confidence_percentage,
+        'level': level,
+        'guidance': guidance
+    }
+
+def format_telegram_message(indicators, pro_analysis=None):
+    """Format market analysis message for Telegram with professional analysis"""
+    try:
+        # Get current time
+        current_hour = datetime.now().hour
+        
+        # Determine timeframe based on time of day
+        if 5 <= current_hour < 12:  # Morning
+            timeframe = "next 12 hours"
+        elif 12 <= current_hour < 17:  # Afternoon
+            timeframe = "next 12 hours"
+        else:  # Evening
+            timeframe = "overnight and early morning"
+        
+        # Get BTC and ETH data
+        btc_data = indicators.get("BTC", {})
+        eth_data = indicators.get("ETH", {})
+        
+        # Get current prices
+        btc_price = btc_data.get("price", 0)
+        eth_price = eth_data.get("price", 0)
+        
+        # Get signals and confidence
+        btc_signal = btc_data.get("signal", "NEUTRAL")
+        eth_signal = eth_data.get("signal", "NEUTRAL")
+        btc_confidence = btc_data.get("signal_confidence", 0)
+        eth_confidence = eth_data.get("signal_confidence", 0)
+        
+        # Get support and resistance levels
+        btc_support = btc_data.get("support", 0)
+        btc_resistance = btc_data.get("resistance", 0)
+        eth_support = eth_data.get("support", 0)
+        eth_resistance = eth_data.get("resistance", 0)
+        
+        # Get key levels
+        btc_levels = btc_data.get("key_levels", {})
+        eth_levels = eth_data.get("key_levels", {})
+        
+        # Determine primary scenario based on both BTC and ETH
+        primary_scenario = "NEUTRAL"
+        confidence_level = "low"
+        bullish_prob = 50
+        bearish_prob = 50
+        strongest_signal = "technical"
+        volatility_regime = "medium"
+        
+        # Use professional analysis if available
+        if pro_analysis and "error" not in pro_analysis:
+            primary_scenario = pro_analysis['primary_scenario']
+            confidence_level = pro_analysis['confidence_level']
+            bullish_prob = pro_analysis['bullish_probability']
+            bearish_prob = pro_analysis['bearish_probability']
+            strongest_signal = pro_analysis['key_factors']['strongest_signal'][0]
+            volatility_regime = pro_analysis['risk_assessment']['volatility_regime']
+        else:
+            # Fallback to basic analysis
+            if btc_signal == eth_signal:
+                primary_scenario = btc_signal
             else:
-                df = pd.read_csv(file)
-                if len(df) < 2:
-                    print("\n[WARN] Need at least 2 days of data for AI insights")
-                else:
-                    days = min(3, len(df))
-                    last_days = df.tail(days).to_dict("records")
-                    
-                    # Get current prices to add to the prompt
-                    current_btc_price = df.iloc[-1].get('btc_price') if 'btc_price' in df.columns and pd.notna(df.iloc[-1].get('btc_price')) else 'N/A'
-                    current_eth_price = df.iloc[-1].get('eth_price') if 'eth_price' in df.columns and pd.notna(df.iloc[-1].get('eth_price')) else 'N/A'
-                    
-                    # Build a much more comprehensive prompt that includes ALL data points
-                    detailed_data = []
-                    for row in last_days:
-                        data_point = f"DATE: {row['date']}\n"
-                        
-                        # Crypto prices and market structure
-                        data_point += "CRYPTO PRICES:\n"
-                        data_point += f"- BTC: ${row['btc_price']:.2f}\n" if 'btc_price' in row and pd.notna(row['btc_price']) else ""
-                        data_point += f"- ETH: ${row['eth_price']:.2f}\n" if 'eth_price' in row and pd.notna(row['eth_price']) else ""
-                        data_point += f"- BTC Dominance: {row['btc_dominance']:.2f}%\n" if 'btc_dominance' in row and pd.notna(row['btc_dominance']) else ""
-                        data_point += f"- Market Cap: ${row['market_cap']/1e12:.2f}T\n" if 'market_cap' in row and pd.notna(row['market_cap']) else ""
-                        
-                        # Trading volumes and activity
-                        data_point += "\nTRADING ACTIVITY:\n"
-                        data_point += f"- BTC Volume: ${row['btc_volume']/1e9:.2f}B\n" if 'btc_volume' in row and pd.notna(row['btc_volume']) else ""
-                        data_point += f"- ETH Volume: ${row['eth_volume']/1e9:.2f}B\n" if 'eth_volume' in row and pd.notna(row['eth_volume']) else ""
-                        data_point += f"- BTC Funding Rate: {row['btc_funding']:.4f}%\n" if 'btc_funding' in row and pd.notna(row['btc_funding']) else ""
-                        data_point += f"- ETH Funding Rate: {row['eth_funding']:.4f}%\n" if 'eth_funding' in row and pd.notna(row['eth_funding']) else ""
-                        
-                        # Technical indicators
-                        data_point += "\nTECHNICAL INDICATORS:\n"
-                        data_point += f"- BTC RSI: {row['btc_rsi']:.2f}\n" if 'btc_rsi' in row and pd.notna(row['btc_rsi']) else ""
-                        data_point += f"- ETH RSI: {row['eth_rsi']:.2f}\n" if 'eth_rsi' in row and pd.notna(row['eth_rsi']) else ""
-                        data_point += f"- BTC Trend: {row['btc_trend']}\n" if 'btc_trend' in row and pd.notna(row['btc_trend']) else ""
-                        data_point += f"- ETH Trend: {row['eth_trend']}\n" if 'eth_trend' in row and pd.notna(row['eth_trend']) else ""
-                        data_point += f"- BTC Signal: {row['btc_signal']}\n" if 'btc_signal' in row and pd.notna(row['btc_signal']) else ""
-                        data_point += f"- ETH Signal: {row['eth_signal']}\n" if 'eth_signal' in row and pd.notna(row['eth_signal']) else ""
-                        data_point += f"- Fear & Greed: {row['fear_greed']} (0=Extreme Fear, 100=Extreme Greed)\n" if 'fear_greed' in row and pd.notna(row['fear_greed']) else ""
-                        
-                        # Macroeconomic indicators
-                        data_point += "\nMACROECONOMIC INDICATORS:\n"
-                        data_point += f"- M2 Money Supply: ${row['m2_supply']/1e12:.2f}T\n" if 'm2_supply' in row and pd.notna(row['m2_supply']) else ""
-                        data_point += f"- Inflation Rate: {row['inflation_rate']:.2f}%\n" if 'inflation_rate' in row and pd.notna(row['inflation_rate']) else ""
-                        data_point += f"- Fed Rate: {row['fed_rate']:.2f}%\n" if 'fed_rate' in row and pd.notna(row['fed_rate']) else ""
-                        data_point += f"- 10Y Treasury: {row['t10_yield']:.2f}%\n" if 't10_yield' in row and pd.notna(row['t10_yield']) else ""
-                        
-                        # Stock market
-                        data_point += "\nSTOCK MARKET:\n"
-                        data_point += f"- S&P 500: {row['sp500']:.2f}\n" if 'sp500' in row and pd.notna(row['sp500']) else ""
-                        data_point += f"- Dow Jones: {row['dow_jones']:.2f}\n" if 'dow_jones' in row and pd.notna(row['dow_jones']) else ""
-                        data_point += f"- NASDAQ: {row['nasdaq']:.2f}\n" if 'nasdaq' in row and pd.notna(row['nasdaq']) else ""
-                        data_point += f"- VIX: {row['vix']:.2f}\n" if 'vix' in row and pd.notna(row['vix']) else ""
-                        
-                        # Commodities
-                        data_point += "\nCOMMODITIES:\n"
-                        data_point += f"- Gold: ${row['gold']:.2f}\n" if 'gold' in row and pd.notna(row['gold']) else ""
-                        data_point += f"- Silver: ${row['silver']:.2f}\n" if 'silver' in row and pd.notna(row['silver']) else ""
-                        data_point += f"- Crude Oil: ${row['crude_oil']:.2f}\n" if 'crude_oil' in row and pd.notna(row['crude_oil']) else ""
-                        
-                        detailed_data.append(data_point)
-                    
-                    # Get prediction accuracy analysis for past predictions
-                    accuracy_analysis = get_prediction_accuracy()
-                    
-                    prompt = f"""
-As a crypto market analyst, provide a highly structured market assessment that includes specific, actionable trading advice with exact price levels. Your response MUST follow this exact structure:
+                primary_scenario = btc_signal if btc_confidence > eth_confidence else eth_signal
+            confidence_level = "medium"
+            if primary_scenario in ["BUY", "STRONG BUY"]:
+                bullish_prob = 65
+                bearish_prob = 35
+            elif primary_scenario in ["SELL", "STRONG SELL"]:
+                bullish_prob = 35
+                bearish_prob = 65
+            else:
+                bullish_prob = 50
+                bearish_prob = 50
+            volatility_regime = btc_data.get('volatility', 'medium')
+        
+        # Generate logical targets for BTC based on scenario
+        def generate_logical_targets(current_price, support, resistance, scenario, levels):
+            """Generate targets that make logical sense for the scenario"""
+            if scenario in ["BUY", "STRONG BUY", "BULLISH"]:
+                # Bullish: targets above current price, stop below
+                target_1 = max(resistance * 0.98, current_price * 1.02)  # At least 2% up
+                target_2 = max(resistance * 1.01, current_price * 1.05)  # At least 5% up
+                stop_loss = min(support * 1.01, current_price * 0.98)   # At most 2% down
+            elif scenario in ["SELL", "STRONG SELL", "BEARISH"]:
+                # Bearish: targets below current price, stop above
+                target_1 = min(support * 1.02, current_price * 0.98)    # At least 2% down
+                target_2 = min(support * 0.99, current_price * 0.95)    # At least 5% down
+                stop_loss = max(resistance * 0.99, current_price * 1.02) # At most 2% up
+            else:
+                # Neutral: small movements
+                target_1 = current_price * 1.01
+                target_2 = current_price * 1.02
+                stop_loss = current_price * 0.99
+            
+            return {
+                'current': current_price,
+                'target_1': target_1,
+                'target_2': target_2,
+                'stop_loss': stop_loss
+            }
+        
+        # Generate BTC and ETH targets
+        btc_targets = generate_logical_targets(btc_price, btc_support, btc_resistance, primary_scenario, btc_levels)
+        eth_targets = generate_logical_targets(eth_price, eth_support, eth_resistance, eth_signal, eth_levels)
+        
+        # Override with professional analysis targets if available and logical
+        if pro_analysis and "error" not in pro_analysis:
+            pro_targets = pro_analysis['price_targets']
+            # Validate that professional targets make sense
+            if primary_scenario in ["BUY", "STRONG BUY", "BULLISH"]:
+                # For bullish scenarios, targets should be above current price
+                if (pro_targets.get('target_1', 0) > pro_targets.get('current', 0) and 
+                    pro_targets.get('stop_loss', 0) < pro_targets.get('current', 0)):
+                    btc_targets = pro_targets
+            elif primary_scenario in ["SELL", "STRONG SELL", "BEARISH"]:
+                # For bearish scenarios, targets should be below current price
+                if (pro_targets.get('target_1', 0) < pro_targets.get('current', 0) and 
+                    pro_targets.get('stop_loss', 0) > pro_targets.get('current', 0)):
+                    btc_targets = pro_targets
+        
+        # Format the message with safe HTML
+        message = "🔍 <b>PROFESSIONAL CRYPTO ANALYSIS</b>\n\n"
+        
+        # Executive Summary with professional analysis
+        message += "📊 <b>EXECUTIVE SUMMARY</b>\n"
+        message += f"• Scenario: <b>{primary_scenario.upper()}</b> ({confidence_level} confidence)\n"
+        message += f"• Timeframe: {timeframe}\n"
+        message += f"• Bullish: {bullish_prob}% | Bearish: {bearish_prob}%\n"
+        message += f"• Strongest Signal: {strongest_signal.replace('_', ' ').title()}\n"
+        message += f"• Volatility: {volatility_regime.title()}\n\n"
+        
+        # BTC Analysis with professional targets
+        message += "₿ <b>BTC ANALYSIS</b>\n"
+        message += "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        message += f"💰 Current: <code>${btc_targets['current']:,.0f}</code>\n"
+        message += f"📈 Resistance: <code>${btc_resistance:,.0f}</code>\n"
+        message += f"📉 Support: <code>${btc_support:,.0f}</code>\n"
+        message += f"📊 RSI: {btc_data.get('rsi14', 0):.1f} | Signal: {btc_signal}\n"
+        message += f"📈 Trend: {btc_data.get('trend', 'Unknown').title()}\n\n"
+        
+        # Calculate BTC confidence
+        btc_conf = calculate_trading_confidence(
+            price=btc_price,
+            support=btc_support, 
+            resistance=btc_resistance,
+            rsi=btc_data.get('rsi14'),
+            trend=btc_data.get('trend'),
+            signal=btc_signal,
+            volume_trend=btc_data.get('volume_trend'),
+            atr=btc_data.get('atr')
+        )
+        
+        # BTC Trading Plan (immediately after BTC Analysis)
+        message += f"🎯 <b>BTC TRADING PLAN - {primary_scenario.upper()}</b>\n"
+        message += f"• Entry Zone: <code>${btc_targets['current']:,.0f}</code>\n"
+        
+        # Calculate direction and format safely - ensure proper escaping
+        tp1_change = calculate_percentage(btc_targets['current'], btc_targets['target_1'])
+        tp2_change = calculate_percentage(btc_targets['current'], btc_targets['target_2'])
+        sl_change = calculate_percentage(btc_targets['current'], btc_targets['stop_loss'])
+        
+        # Ensure percentages are properly formatted (avoid special characters)
+        tp1_str = f"{tp1_change:.1f}" if tp1_change else "0.0"
+        tp2_str = f"{tp2_change:.1f}" if tp2_change else "0.0"
+        sl_str = f"{sl_change:.1f}" if sl_change else "0.0"
+        
+        # Use safe formatting with proper HTML escaping
+        if btc_targets['target_1'] > btc_targets['current']:
+            message += f"• Target 1: ↗️ <code>${btc_targets['target_1']:,.0f}</code> (+{tp1_str}%)\n"
+        else:
+            message += f"• Target 1: ↘️ <code>${btc_targets['target_1']:,.0f}</code> (-{tp1_str}%)\n"
+            
+        if btc_targets['target_2'] > btc_targets['current']:
+            message += f"• Target 2: ↗️ <code>${btc_targets['target_2']:,.0f}</code> (+{tp2_str}%)\n"
+        else:
+            message += f"• Target 2: ↘️ <code>${btc_targets['target_2']:,.0f}</code> (-{tp2_str}%)\n"
+            
+        if btc_targets['stop_loss'] < btc_targets['current']:
+            message += f"• Stop Loss: ↘️ <code>${btc_targets['stop_loss']:,.0f}</code> (-{sl_str}%)\n"
+        else:
+            message += f"• Stop Loss: ↗️ <code>${btc_targets['stop_loss']:,.0f}</code> (+{sl_str}%)\n"
+        
+        # Calculate risk/reward with safe formatting
+        risk = abs(btc_targets['current'] - btc_targets['stop_loss'])
+        reward = abs(btc_targets['target_1'] - btc_targets['current'])
+        rr_ratio = reward / risk if risk > 0 else 0
+        rr_str = f"{rr_ratio:.1f}" if rr_ratio else "0.0"
+        message += f"• Risk/Reward: 1:{rr_str}\n"
+        
+        # Add confidence scoring
+        message += f"• <b>Confidence: {btc_conf['percentage']:.0f}% ({btc_conf['level']})</b>\n"
+        message += f"• Strategy: {btc_conf['guidance']}\n\n"
+        
+        # ETH Analysis
+        message += "Ξ <b>ETH ANALYSIS</b>\n"
+        message += "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        message += f"💰 Current: <code>${eth_targets['current']:,.0f}</code>\n"
+        message += f"📈 Resistance: <code>${eth_resistance:,.0f}</code>\n"
+        message += f"📉 Support: <code>${eth_support:,.0f}</code>\n"
+        message += f"📊 RSI: {eth_data.get('rsi14', 0):.1f} | Signal: {eth_signal}\n"
+        message += f"📈 Trend: {eth_data.get('trend', 'Unknown').title()}\n\n"
+        
+        # Calculate ETH confidence
+        eth_conf = calculate_trading_confidence(
+            price=eth_price,
+            support=eth_support,
+            resistance=eth_resistance, 
+            rsi=eth_data.get('rsi14'),
+            trend=eth_data.get('trend'),
+            signal=eth_signal,
+            volume_trend=eth_data.get('volume_trend'),
+            atr=eth_data.get('atr')
+        )
+        
+        # ETH Trading Plan (immediately after ETH Analysis)
+        message += f"🎯 <b>ETH TRADING PLAN - {eth_signal.upper()}</b>\n"
+        message += f"• Entry: <code>${eth_targets['current']:,.0f}</code>\n"
+        
+        eth_tp1_change = calculate_percentage(eth_targets['current'], eth_targets['target_1'])
+        eth_sl_change = calculate_percentage(eth_targets['current'], eth_targets['stop_loss'])
+        
+        # Safe percentage formatting
+        eth_tp1_str = f"{eth_tp1_change:.1f}" if eth_tp1_change else "0.0"
+        eth_sl_str = f"{eth_sl_change:.1f}" if eth_sl_change else "0.0"
+        
+        if eth_targets['target_1'] > eth_targets['current']:
+            message += f"• Target: ↗️ <code>${eth_targets['target_1']:,.0f}</code> (+{eth_tp1_str}%)\n"
+        else:
+            message += f"• Target: ↘️ <code>${eth_targets['target_1']:,.0f}</code> (-{eth_tp1_str}%)\n"
+            
+        if eth_targets['stop_loss'] < eth_targets['current']:
+            message += f"• Stop: ↘️ <code>${eth_targets['stop_loss']:,.0f}</code> (-{eth_sl_str}%)\n"
+        else:
+            message += f"• Stop: ↗️ <code>${eth_targets['stop_loss']:,.0f}</code> (+{eth_sl_str}%)\n"
+            
+        # Add ETH confidence scoring
+        message += f"• <b>Confidence: {eth_conf['percentage']:.0f}% ({eth_conf['level']})</b>\n"
+        message += f"• Strategy: {eth_conf['guidance']}\n\n"
+        
+        # Market Context
+        message += "📈 <b>MARKET CONTEXT</b>\n"
+        message += "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        message += f"• BTC Volume: {btc_data.get('volume_trend', 'Unknown').title()}\n"
+        message += f"• ETH Volume: {eth_data.get('volume_trend', 'Unknown').title()}\n"
+        message += f"• BTC ATR: <code>${btc_data.get('atr', 0):,.0f}</code>\n"
+        message += f"• ETH ATR: <code>${eth_data.get('atr', 0):,.0f}</code>\n"
+        
+        if pro_analysis and "error" not in pro_analysis:
+            expected_move = pro_analysis['price_targets'].get('expected_move', 0)
+            message += f"• Expected Move: <code>${expected_move:,.0f}</code>\n"
+        
+        message += "\n⚠️ <b>Risk Management: Use proper position sizing and stick to your plan</b>"
+        
+        return message
+        
+    except Exception as e:
+        print(f"[ERROR] Message formatting: {e}")
+        import traceback
+        traceback.print_exc()
+        return "Error formatting message"
 
-## OVERALL MARKET ANALYSIS
-Provide a concise assessment of current crypto market conditions and the macro environment.
+def main():
+    """Main execution function"""
+    global config  # Make sure we're using the global config
+    
+    # Log times in different timezones
+    server_time = datetime.now()
+    utc_time = datetime.now(timezone.utc)
+    print(f"[INFO] UTC time: {utc_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"[INFO] Server time: {server_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"[INFO] Server timezone: {time.tzname[0]}")
+    print(f"[INFO] Expected Vietnam time: {(utc_time + timedelta(hours=7)).strftime('%Y-%m-%d %H:%M:%S')}")
+    
+    # Handle test mode configuration
+    is_test_mode = config["test_mode"]["enabled"]
+    if is_test_mode:
+        print("[TEST] Running in test mode")
+        print("[TEST] Using test Telegram bot")
+        # Store original production settings
+        original_bot_token = config["telegram"]["bot_token"]
+        original_chat_id = config["telegram"]["chat_id"]
+        # Switch to test settings
+        config["telegram"]["bot_token"] = config["telegram"]["test"]["bot_token"]
+        config["telegram"]["chat_id"] = config["telegram"]["test"]["chat_id"]
+        config["telegram"]["enabled"] = True  # Enable Telegram in test mode
+        print(f"[TEST] Using test bot token: {config['telegram']['bot_token'][:10]}...")
+        print(f"[TEST] Using test chat ID: {config['telegram']['chat_id']}")
+    
+    # Check if models need retraining
+    if should_retrain_models():
+        print("[INFO] Retraining ML models...")
+        train_ml_models()
+    
+    # Collect market data
+    print("[INFO] Collecting market data...")
+    market_data = collect_all_data()
+    
+    # Get AI prediction
+    print("\n[INFO] Getting AI prediction...")
+    prediction = ask_ai(market_data)
+    
+    # Save detailed prediction with ML and risk analysis
+    print("\n[INFO] Saving detailed prediction...")
+    save_detailed_prediction(prediction, market_data)
+    
+    # Send Telegram notification if configured
+    if config.get("telegram", {}).get("enabled"):
+        print("\n[INFO] Sending Telegram message...")
+        message = format_telegram_message(market_data["technical_indicators"], professional_trader.generate_probabilistic_forecast(market_data))
+        
+        # Debug: Show message details
+        print(f"[DEBUG] Message length: {len(message)} characters")
+        if len(message) > 4096:
+            print(f"[WARN] Message exceeds Telegram limit (4096 chars)")
+        
+        # Show first 500 chars for debugging
+        print(f"[DEBUG] Message preview:")
+        print(f"{'='*50}")
+        print(message[:500] + "..." if len(message) > 500 else message)
+        print(f"{'='*50}")
+        
+        # Create a new instance of the Telegram bot with current settings
+        bot = TelegramBot(
+            bot_token=config["telegram"]["bot_token"],
+            chat_id=config["telegram"]["chat_id"]
+        )
+        success = bot.send_message(message)
+        
+        if success:
+            print("[INFO] Telegram message sent successfully")
+        else:
+            print("[ERROR] Failed to send Telegram message")
+        
+        # Restore original production settings if in test mode
+        if is_test_mode:
+            config["telegram"]["bot_token"] = original_bot_token
+            config["telegram"]["chat_id"] = original_chat_id
+            print("[TEST] Restored production Telegram settings")
+    else:
+        print("[WARN] Telegram notifications are disabled")
 
-## BTC TRADING RECOMMENDATION
-- Current Price: ${current_btc_price}
-- Direction: [BULLISH/BEARISH/SIDEWAYS]
-- Primary Trade Setup: [SPECIFIC ENTRY/EXIT RECOMMENDATION] 
-- Entry Price Range: $X,XXX - $X,XXX
-- Take Profit Targets: TP1: $X,XXX (XX%), TP2: $X,XXX (XX%)
-- Stop Loss: $X,XXX (XX%)
-- Timeframe: [SPECIFIC HOURS/DAYS]
-- Key Support Levels: $X,XXX, $X,XXX, $X,XXX
-- Key Resistance Levels: $X,XXX, $X,XXX, $X,XXX
-- Invalidation Scenario: [SPECIFIC PRICE OR CONDITION]
-- Confidence Score: X/10
-- Confidence Rationale: [EXPLAIN WHY THIS CONFIDENCE LEVEL]
-
-## ETH TRADING RECOMMENDATION
-- Current Price: ${current_eth_price}
-- Direction: [BULLISH/BEARISH/SIDEWAYS]
-- Primary Trade Setup: [SPECIFIC ENTRY/EXIT RECOMMENDATION]
-- Entry Price Range: $X,XXX - $X,XXX
-- Take Profit Targets: TP1: $X,XXX (XX%), TP2: $X,XXX (XX%)
-- Stop Loss: $X,XXX (XX%)
-- Timeframe: [SPECIFIC HOURS/DAYS]
-- Key Support Levels: $X,XXX, $X,XXX, $X,XXX
-- Key Resistance Levels: $X,XXX, $X,XXX, $X,XXX
-- Invalidation Scenario: [SPECIFIC PRICE OR CONDITION]
-- Confidence Score: X/10
-- Confidence Rationale: [EXPLAIN WHY THIS CONFIDENCE LEVEL]
-
-## MARKET STRUCTURE INSIGHTS
-- Correlation Analysis: [CRYPTO-STOCKS-COMMODITIES RELATIONSHIPS]
-- Volume Analysis: [INSIGHTS ON VOLUME PATTERNS]
-- Market Breadth: [ANALYSIS OF BROADER MARKET HEALTH]
-- Dominant Market Force: [TECHNICAL/FUNDAMENTAL/SENTIMENT]
-
-## RISK ASSESSMENT
-- Market Risk Level: X/10 [1=LOW RISK, 10=HIGH RISK]
-- Key Risk Factors: [LIST SPECIFIC RISKS]
-- Volatility Expectation: [HIGH/MEDIUM/LOW] with [INCREASING/DECREASING] trend
-
-Your predictions will be tracked and compared with actual outcomes for accuracy. Be precise with price levels and realistic with confidence scores.
-
-{accuracy_analysis}
-
-DATA FOR ANALYSIS:
-""" + "\n\n".join(detailed_data)
-                    
-                    print("\n=== 📈 AI Market Interpretation ===\n")
-                    ai_analysis = ask_ai(prompt)
-                    # After printing the AI analysis, replace the Telegram code with this:
-                    print(ai_analysis)
-
-                    # Get current data for predictions
-                    try:
-                        current_data = df.iloc[-1].to_dict()
-                    except:
-                        print("[WARN] Could not get current data for prediction saving")
-                        current_data = {}  # Fallback empty dict
-
-                    # Enhanced Telegram notification with more details
-                    try:
-                        # Create a simple message with the most important parts
-                        message = "🤖 <b>CRYPTO MARKET ANALYSIS</b>\n\n"
-                        
-                        # Add market overview summary
-                        if "## OVERALL MARKET ANALYSIS" in ai_analysis:
-                            overview = ai_analysis.split("## OVERALL MARKET ANALYSIS")[1].split("## BTC TRADING RECOMMENDATION")[0].strip()
-                            # Get first sentence or first 150 characters
-                            if "." in overview[:150]:
-                                summary = overview.split(".")[0] + "."
-                            else:
-                                summary = overview[:150] + "..."
-                            message += f"<b>Overview:</b> {summary}\n\n"
-                        
-                        # Extract sections properly
-                        btc_section = ""
-                        eth_section = ""
-                        
-                        if "## BTC TRADING RECOMMENDATION" in ai_analysis and "## ETH TRADING RECOMMENDATION" in ai_analysis:
-                            btc_section = ai_analysis.split("## BTC TRADING RECOMMENDATION")[1].split("## ETH TRADING RECOMMENDATION")[0]
-                            
-                            if "## MARKET STRUCTURE INSIGHTS" in ai_analysis:
-                                eth_section = ai_analysis.split("## ETH TRADING RECOMMENDATION")[1].split("## MARKET STRUCTURE INSIGHTS")[0]
-                            else:
-                                eth_section = ai_analysis.split("## ETH TRADING RECOMMENDATION")[1]
-                        
-                        # Extract BTC details from BTC section
-                        btc_direction = ""
-                        btc_entry = ""
-                        btc_tp = ""
-                        btc_sl = ""
-                        btc_time = ""
-                        btc_confidence = ""
-                        
-                        for line in btc_section.split("\n"):
-                            if "Direction:" in line:
-                                btc_direction = line.split("Direction:")[1].strip()
-                            elif "Entry Price Range:" in line:
-                                btc_entry = line
-                            elif "Take Profit Targets:" in line:
-                                btc_tp = line
-                            elif "Stop Loss:" in line:
-                                btc_sl = line
-                            elif "Timeframe:" in line:
-                                btc_time = line.split("Timeframe:")[1].strip()
-                            elif "Confidence Score:" in line:
-                                btc_confidence = line.split("Confidence Score:")[1].strip()
-                        
-                        # Add BTC section
-                        message += f"<b>🔶 BTC ({btc_direction}):</b>\n"
-                        message += f"{btc_entry}\n"
-                        message += f"{btc_tp}\n"
-                        message += f"{btc_sl}\n"
-                        if btc_time:
-                            message += f"- Timeframe: {btc_time}\n"
-                        if btc_confidence:
-                            message += f"- Confidence: {btc_confidence}\n"
-                        message += "\n"
-                        
-                        # Extract ETH details from ETH section
-                        eth_direction = ""
-                        eth_entry = ""
-                        eth_tp = ""
-                        eth_sl = ""
-                        eth_time = ""
-                        eth_confidence = ""
-                        
-                        for line in eth_section.split("\n"):
-                            if "Direction:" in line:
-                                eth_direction = line.split("Direction:")[1].strip()
-                            elif "Entry Price Range:" in line:
-                                eth_entry = line
-                            elif "Take Profit Targets:" in line:
-                                eth_tp = line
-                            elif "Stop Loss:" in line:
-                                eth_sl = line
-                            elif "Timeframe:" in line:
-                                eth_time = line.split("Timeframe:")[1].strip()
-                            elif "Confidence Score:" in line:
-                                eth_confidence = line.split("Confidence Score:")[1].strip()
-                        
-                        # Add ETH section
-                        message += f"<b>💠 ETH ({eth_direction}):</b>\n"
-                        message += f"{eth_entry}\n"
-                        message += f"{eth_tp}\n"
-                        message += f"{eth_sl}\n"
-                        if eth_time:
-                            message += f"- Timeframe: {eth_time}\n"
-                        if eth_confidence:
-                            message += f"- Confidence: {eth_confidence}\n"
-                        message += "\n"
-                        
-                        # Find risk level and volatility
-                        risk_level = "N/A"
-                        volatility = ""
-                        
-                        if "## RISK ASSESSMENT" in ai_analysis:
-                            risk_section = ai_analysis.split("## RISK ASSESSMENT")[1]
-                            for line in risk_section.split("\n"):
-                                if "Market Risk Level:" in line:
-                                    risk_level = line.split("Market Risk Level:")[1].strip()
-                                elif "Volatility Expectation:" in line:
-                                    volatility = line.split("Volatility Expectation:")[1].strip()
-                        
-                        message += f"<b>⚠️ RISK ASSESSMENT:</b>\n"
-                        message += f"- Risk Level: {risk_level}\n"
-                        if volatility:
-                            message += f"- Volatility: {volatility}\n"
-                        message += f"\n<i>Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}</i>"
-                        
-                        # Send the message
-                        send_telegram_message(message)
-                        print("[INFO] Enhanced Telegram market analysis sent")
-                    except Exception as e:
-                        print(f"[ERROR] Failed to send Telegram notification: {e}")
-
-                    # Parse the AI response to extract structured prediction data
-                    try:
-                        # Extract prediction sections
-                        structured_prediction = {}
-                        
-                        # Very basic parsing - in production you'd want more robust extraction
-                        if "## BTC TRADING RECOMMENDATION" in ai_analysis and "## ETH TRADING RECOMMENDATION" in ai_analysis:
-                            btc_section = ai_analysis.split("## BTC TRADING RECOMMENDATION")[1].split("## ETH TRADING RECOMMENDATION")[0]
-                            eth_section = ai_analysis.split("## ETH TRADING RECOMMENDATION")[1].split("## MARKET STRUCTURE INSIGHTS")[0] if "## MARKET STRUCTURE INSIGHTS" in ai_analysis else ai_analysis.split("## ETH TRADING RECOMMENDATION")[1]
-                            
-                            # Extract BTC prediction components
-                            btc_prediction = {}
-                            for field in ["Direction:", "Primary Trade Setup:", "Entry Price Range:", "Take Profit Targets:", 
-                                        "Stop Loss:", "Timeframe:", "Confidence Score:", "Key Support Levels:", "Key Resistance Levels:"]:
-                                if field in btc_section:
-                                    field_line = [line for line in btc_section.split("\n") if field in line]
-                                    if field_line:
-                                        key = field.replace(":", "").strip().lower().replace(" ", "_")
-                                        btc_prediction[key] = field_line[0].split(field)[1].strip()
-                            
-                            # Extract ETH prediction components  
-                            eth_prediction = {}
-                            for field in ["Direction:", "Primary Trade Setup:", "Entry Price Range:", "Take Profit Targets:", 
-                                        "Stop Loss:", "Timeframe:", "Confidence Score:", "Key Support Levels:", "Key Resistance Levels:"]:
-                                if field in eth_section:
-                                    field_line = [line for line in eth_section.split("\n") if field in line]
-                                    if field_line:
-                                        key = field.replace(":", "").strip().lower().replace(" ", "_")
-                                        eth_prediction[key] = field_line[0].split(field)[1].strip()
-                            
-                            structured_prediction = {
-                                "btc_prediction": btc_prediction,
-                                "eth_prediction": eth_prediction
-                            }
-                            
-                            # Save detailed prediction (only if we have current_data)
-                            if current_data:
-                                save_detailed_prediction(structured_prediction, current_data)
-                                print("[INFO] Structured prediction data saved successfully")
-                            else:
-                                print("[WARN] Could not save structured prediction - missing current data")
-                            
-                            # Also save in original format
-                            if current_data:
-                                save_prediction(ai_analysis, current_data)
-                        
-                    except Exception as e:
-                        print(f"[ERROR] Failed to parse structured prediction: {e}")
-                        # Only try to save in original format if we have current_data
-                        if current_data:
-                            save_prediction(ai_analysis, current_data)
-                            
-                    except Exception as e:
-                        print(f"[ERROR] Failed to parse structured prediction: {e}")
-                        # Only try to save in original format if we have current_data
-                        if current_data:
-                            save_prediction(ai_analysis, current_data)
-                    
-        except Exception as e:
-            print(f"\n[ERROR] Failed to generate AI insights: {e}")
-
-    print("\n=== ✅ Done ===")
+if __name__ == "__main__":
+    # Check for test mode argument
+    import sys
+    config = load_config()  # Load config first
+    if len(sys.argv) > 1 and sys.argv[1] == "--test":
+        config["test_mode"]["enabled"] = True
+        print("[TEST] Test mode enabled")
+    main()
