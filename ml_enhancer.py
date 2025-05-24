@@ -25,31 +25,41 @@ class PredictionEnhancer:
         try:
             features = {}
             
+            # Helper function to safely convert to float
+            def safe_float(value, default=0):
+                if value is None:
+                    return float(default)
+                if isinstance(value, tuple):
+                    value = value[0] if value else default
+                try:
+                    return float(value) if value is not None else float(default)
+                except (ValueError, TypeError):
+                    return float(default)
+            
             # Price metrics
             btc_price = market_data.get('btc_price', 0)
             eth_price = market_data.get('eth_price', 0)
-            features['btc_price'] = float(btc_price[0] if isinstance(btc_price, tuple) else btc_price)
-            features['eth_price'] = float(eth_price[0] if isinstance(eth_price, tuple) else eth_price)
+            features['btc_price'] = safe_float(btc_price, 0)
+            features['eth_price'] = safe_float(eth_price, 0)
             
             # Technical indicators
             btc_rsi = market_data.get('btc_rsi', 50)
             eth_rsi = market_data.get('eth_rsi', 50)
-            features['btc_rsi'] = float(btc_rsi[0] if isinstance(btc_rsi, tuple) else btc_rsi)
-            features['eth_rsi'] = float(eth_rsi[0] if isinstance(eth_rsi, tuple) else eth_rsi)
+            features['btc_rsi'] = safe_float(btc_rsi, 50)
+            features['eth_rsi'] = safe_float(eth_rsi, 50)
             
             # Market sentiment
             fear_greed = market_data.get('fear_greed', {})
             if isinstance(fear_greed, dict):
-                features['fear_greed'] = float(fear_greed.get('index', 50))
+                features['fear_greed'] = safe_float(fear_greed.get('index', 50), 50)
             else:
-                fear_greed = fear_greed[0] if isinstance(fear_greed, tuple) else fear_greed
-                features['fear_greed'] = float(fear_greed if fear_greed is not None else 50)
+                features['fear_greed'] = safe_float(fear_greed, 50)
             
             # Market metrics
             market_cap = market_data.get('market_cap', 0)
             btc_dominance = market_data.get('btc_dominance', 50)
-            features['market_cap'] = float(market_cap[0] if isinstance(market_cap, tuple) else market_cap)
-            features['btc_dominance'] = float(btc_dominance[0] if isinstance(btc_dominance, tuple) else btc_dominance)
+            features['market_cap'] = safe_float(market_cap, 0)
+            features['btc_dominance'] = safe_float(btc_dominance, 50)
             
             # Convert to numpy array
             feature_names = sorted(features.keys())
