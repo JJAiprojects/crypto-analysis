@@ -1205,12 +1205,12 @@ def save_improvement_data(improvement_data):
 def format_notification_message(notification):
     """Format a notification message for Telegram"""
     if notification["type"] == "professional_target":
+        target_num = notification.get('target_number', 1)
         return (
-            f"🎯 <b>PROFESSIONAL TARGET HIT</b>\n\n"
+            f"🎯 <b>PROFESSIONAL TARGET {target_num} HIT</b>\n\n"
             f"Coin: {notification['coin']}\n"
-            f"Target Level: {notification['target_level']}\n"
-            f"Predicted: ${notification['predicted_price']:,.2f}\n"
-            f"Actual: ${notification['actual_price']:,.2f}\n"
+            f"Target Level: ${notification['target_level']:,.2f}\n"
+            f"Current Price: ${notification['current_price']:,.2f}\n"
             f"Scenario: {notification['scenario']}\n\n"
             f"<i>Professional analysis target reached successfully!</i>"
         )
@@ -1218,8 +1218,8 @@ def format_notification_message(notification):
         return (
             f"⚠️ <b>PROFESSIONAL STOP LOSS HIT</b>\n\n"
             f"Coin: {notification['coin']}\n"
-            f"Predicted: ${notification['predicted_price']:,.2f}\n"
-            f"Actual: ${notification['actual_price']:,.2f}\n"
+            f"Stop Level: ${notification['stop_level']:,.2f}\n"
+            f"Current Price: ${notification['current_price']:,.2f}\n"
             f"Scenario: {notification['scenario']}\n\n"
             f"<i>Professional stop loss triggered. Position closed.</i>"
         )
