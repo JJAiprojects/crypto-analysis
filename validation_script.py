@@ -323,7 +323,14 @@ def validate_predictions():
     
     # Process all unvalidated predictions
     for pred in predictions:
-        pred_timestamp = datetime.strptime(pred["timestamp"], "%Y-%m-%d %H:%M:%S")
+        # Handle both timestamp formats (ISO and space-separated)
+        timestamp_str = pred["timestamp"]
+        if 'T' in timestamp_str:
+            # ISO format from database: '2025-05-24T10:12:01'
+            pred_timestamp = datetime.fromisoformat(timestamp_str.replace('Z', ''))
+        else:
+            # Space format from JSON: '2025-05-24 10:12:01'
+            pred_timestamp = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
         
         # Skip very recent predictions (less than 1 hour old)
         if (datetime.now() - pred_timestamp).total_seconds() < 3600:
