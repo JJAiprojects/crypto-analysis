@@ -68,12 +68,12 @@ class PredictionHistory(Base):
 class DatabaseManager:
     def __init__(self):
         self.engine = None
-        self.SessionLocal = None
+        self.Session = None
         self.use_database = False
         self.initialize_database()
     
     def initialize_database(self):
-        """Initialize database connection or fallback to JSON files"""
+        """Initialize database connection with enhanced PostgreSQL support for Render"""
         try:
             # Check for database URL (Render provides DATABASE_URL)
             database_url = os.getenv('DATABASE_URL')
@@ -84,7 +84,16 @@ class DatabaseManager:
                     database_url = database_url.replace('postgres://', 'postgresql://', 1)
                 
                 logger.info("Connecting to PostgreSQL database...")
-                self.engine = create_engine(database_url, echo=False)
+                # Enhanced PostgreSQL connection with proper settings for Render
+                self.engine = create_engine(
+                    database_url,
+                    echo=False,
+                    pool_pre_ping=True,  # Verify connections before use
+                    pool_recycle=300,    # Recycle connections every 5 minutes
+                    connect_args={
+                        "sslmode": "require",  # Require SSL for security
+                    }
+                )
                 
             else:
                 # Local development - use SQLite
@@ -93,8 +102,14 @@ class DatabaseManager:
             
             # Create tables
             Base.metadata.create_all(bind=self.engine)
-            self.SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=self.engine)
+            self.Session = sessionmaker(autocommit=False, autoflush=False, bind=self.engine)
             self.use_database = True
+            
+            # Test connection
+            session = self.get_session()
+            session.execute(text("SELECT 1"))
+            session.close()
+            
             logger.info("Database initialized successfully!")
             
         except Exception as e:
@@ -106,7 +121,7 @@ class DatabaseManager:
         """Get database session"""
         if not self.use_database:
             raise Exception("Database not available")
-        return self.SessionLocal()
+        return self.Session()
     
     def save_prediction(self, prediction_data: Dict) -> bool:
         """Save prediction to database or JSON file"""

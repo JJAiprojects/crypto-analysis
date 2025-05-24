@@ -262,6 +262,7 @@ def validate_predictions():
     print(f"[INFO] Server time: {server_time.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"[INFO] Expected Vietnam time: {(utc_time + timedelta(hours=7)).strftime('%Y-%m-%d %H:%M:%S')}")
     
+
     # Load config
     config = load_config()
     

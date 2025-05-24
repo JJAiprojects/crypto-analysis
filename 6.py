@@ -1304,6 +1304,7 @@ def save_detailed_prediction(prediction_data, market_data):
         prediction_file = config["test_mode"]["output_prefix"] + prediction_file
         print(f"[TEST] Using test prediction file: {prediction_file}")
     
+
     today = datetime.now().strftime("%Y-%m-%d")
     current_hour = datetime.now().hour
     session = "morning" if current_hour < 15 else "evening"

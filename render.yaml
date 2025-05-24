@@ -1,0 +1,41 @@
+services:
+  # Main prediction script (existing web service)
+  - type: web
+    name: crypto-prediction-system
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python 6.py
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: FRED_API_KEY
+        sync: false
+      - key: ALPHAVANTAGE_API_KEY
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+
+  # Optimal validation cron job - handles all validation and reporting
+  - type: cron
+    name: crypto-validation-optimal
+    env: python
+    buildCommand: pip install -r requirements.txt
+    schedule: "*/30 * * * *"  # Every 30 minutes for responsive validation
+    startCommand: python validation_script.py
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: FRED_API_KEY
+        sync: false
+      - key: ALPHAVANTAGE_API_KEY
+        sync: false
+      - key: DATABASE_URL
+        sync: false 
