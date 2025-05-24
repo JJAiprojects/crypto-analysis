@@ -1295,6 +1295,9 @@ def save_prediction(prediction, data):
 
 def save_detailed_prediction(prediction_data, market_data):
     """Save structured prediction with detailed metrics and risk analysis"""
+    # Load config first
+    config = load_config()
+    
     # Use test file if in test mode
     prediction_file = "detailed_predictions.json"
     if config["test_mode"]["enabled"]:
