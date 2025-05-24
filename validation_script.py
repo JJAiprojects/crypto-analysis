@@ -12,6 +12,15 @@ from risk_manager import RiskManager
 from professional_analysis import ProfessionalTraderAnalysis
 from dotenv import load_dotenv
 
+# Import database manager
+try:
+    from database_manager import db_manager
+    DATABASE_AVAILABLE = True
+    print("[INFO] Database manager loaded successfully")
+except ImportError:
+    print("[WARN] Database manager not available, using JSON files only")
+    DATABASE_AVAILABLE = False
+
 def load_telegram_config():
     """Load Telegram configuration from environment variables or config file"""
     # Try environment variables first
@@ -265,166 +274,198 @@ def validate_predictions():
         prediction_file = config["test_mode"]["output_prefix"] + prediction_file
         print(f"[TEST] Using test prediction file: {prediction_file}")
     
-    if not os.path.exists(prediction_file):
-        print("[INFO] No predictions to validate yet")
-        return
-    
-    try:
-    # Load predictions
-        with open(prediction_file, "r") as f:
-            predictions = json.load(f)
-        
-        if not predictions:
-            print("[INFO] No predictions to validate")
-        return
-    
-        # Initialize components
-        ml_enhancer = PredictionEnhancer()
-        risk_manager = RiskManager()
-        professional_trader = ProfessionalTraderAnalysis()
-        
-        # Get current prices
-        prices = get_crypto_prices()
-        
-        # Track notifications and improvements
-        notifications = []
-        ml_training_data = []
-        
-        # Get the latest prediction for detailed tracking
-        latest_prediction = predictions[-1] if predictions else None
-        
-        # Process all unvalidated predictions
-        for pred in predictions:
-            pred_timestamp = datetime.strptime(pred["timestamp"], "%Y-%m-%d %H:%M:%S")
-            
-            # Skip very recent predictions (less than 1 hour old)
-            if (datetime.now() - pred_timestamp).total_seconds() < 3600:
-                continue
-        
-            # Initialize validation points if not exists
-            if "validation_points" not in pred:
-                pred["validation_points"] = []
-            
-            # Extract professional analysis predictions
-            ai_pred = pred.get("predictions", {}).get("ai_prediction", "")
-            pro_analysis = pred.get("predictions", {}).get("professional_analysis", {})
-            ml_pred = pred.get("predictions", {}).get("ml_predictions", {})
-            
-            # Enhanced target extraction for professional format
-            if pro_analysis and "price_targets" in pro_analysis:
-                btc_targets = {
-                    "current": pro_analysis["price_targets"].get("current"),
-                    "target_1": pro_analysis["price_targets"].get("target_1"),
-                    "target_2": pro_analysis["price_targets"].get("target_2"),
-                    "stop_loss": pro_analysis["price_targets"].get("stop_loss"),
-                    "scenario": pro_analysis.get("primary_scenario", "NEUTRAL")
-                }
-                
-                # Validate BTC targets
-                validate_professional_targets(pred, "BTC", btc_targets, prices["btc"], latest_prediction == pred, notifications)
-            
-            # Also validate any AI predictions (fallback/additional)
-            targets = extract_professional_targets(ai_pred)
-            for coin in ["BTC", "ETH"]:
-                if targets[coin]:
-                    price = prices[coin.lower()]
-                    validate_legacy_targets(pred, coin, targets[coin], price, latest_prediction == pred, notifications)
-            
-            # Collect ML training data
-            if not pred.get("ml_processed", False):
-                training_point = {
-                    "prediction_data": pred,
-                    "actual_btc_price": prices["btc"],
-                    "actual_eth_price": prices["eth"],
-                    "validation_points": pred["validation_points"],
-                    "timestamp": datetime.now().isoformat()
-                }
-                ml_training_data.append(training_point)
-                pred["ml_processed"] = True
-            
-            # Mark as validated
-            if not pred.get("hourly_validated"):
-                pred["hourly_validated"] = True
-                pred["last_validation"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
-        # Save updated predictions
-        with open(prediction_file, "w") as f:
-            json.dump(predictions, f, indent=4)
-        
-        # Train ML models with new data
-        if ml_training_data:
-            print(f"[INFO] Training ML models with {len(ml_training_data)} new data points")
-            try:
-                ml_enhancer.incremental_learning(ml_training_data)
-                print("[INFO] ML incremental learning completed")
-            except Exception as e:
-                print(f"[ERROR] ML training failed: {e}")
-        
-        # Send notifications for latest prediction
-        if notifications:
-            print(f"[INFO] Sending {len(notifications)} validation notifications")
-            for notification in notifications[-3:]:  # Limit to last 3 notifications
-                message = format_notification_message(notification)
-                send_telegram_message(message, is_test=config["test_mode"]["enabled"])
-        
-        # Check if it's time for accuracy report (7:45 PM and 7:45 AM)
-        current_hour = datetime.now().hour
-        current_minute = datetime.now().minute
-        
-        # Send accuracy report at 7:45 PM (19:45) for 8 AM predictions
-        # Send accuracy report at 7:45 AM (07:45) for 8 PM predictions from previous day
-        if (current_hour == 19 and 45 <= current_minute <= 59) or (current_hour == 7 and 45 <= current_minute <= 59):
-            if current_hour == 19:
-                report_type = "8 AM predictions"
+    # Load predictions from database or JSON file
+    predictions = []
+    if DATABASE_AVAILABLE:
+        try:
+            predictions = db_manager.load_predictions()
+            if predictions:
+                print(f"[INFO] Loaded {len(predictions)} predictions from database")
             else:
-                report_type = "8 PM predictions (previous day)"
-            
-            print(f"[INFO] Generating daily accuracy report for {report_type}")
-            accuracy_metrics = calculate_enhanced_accuracy(predictions)
-            accuracy_message = format_accuracy_summary(accuracy_metrics)
-            send_telegram_message(accuracy_message, is_test=config["test_mode"]["enabled"])
-            
-            # Also send improvement suggestions to AI
-            improvement_data = generate_improvement_suggestions(accuracy_metrics, predictions)
-            save_improvement_data(improvement_data)
+                print("[INFO] No predictions found in database")
+        except Exception as e:
+            print(f"[ERROR] Failed to load predictions from database: {e}")
+            # Fall back to JSON file
+    
+    # Fallback to JSON file if database failed or not available
+    if not predictions:
+        if not os.path.exists(prediction_file):
+            print("[INFO] No predictions to validate yet")
+            return
         
-        # Weekly Deep Learning Analysis - Every Sunday at 8 PM
-        current_weekday = datetime.now().weekday()  # 6 = Sunday
-        if current_weekday == 6 and current_hour == 20 and 0 <= current_minute <= 15:
-            print("[INFO] Generating weekly deep learning analysis...")
-            weekly_insights = generate_deep_learning_insights(predictions, "weekly")
-            save_deep_learning_insights(weekly_insights)
-            
-            # Send comprehensive weekly report
-            weekly_report = format_deep_insights_summary(weekly_insights)
-            send_telegram_message(weekly_report, is_test=config["test_mode"]["enabled"])
-            print("[INFO] Weekly deep learning analysis completed")
+        try:
+            with open(prediction_file, "r") as f:
+                predictions = json.load(f)
+                print(f"[INFO] Loaded {len(predictions)} predictions from JSON file")
+        except Exception as e:
+            print(f"[ERROR] Failed to load predictions from JSON: {e}")
+            return
+    
+    if not predictions:
+        print("[INFO] No predictions to validate")
+        return
+    
+    # Initialize components
+    ml_enhancer = PredictionEnhancer()
+    risk_manager = RiskManager()
+    professional_trader = ProfessionalTraderAnalysis()
+    
+    # Get current prices
+    prices = get_crypto_prices()
+    
+    # Track notifications and improvements
+    notifications = []
+    ml_training_data = []
+    
+    # Get the latest prediction for detailed tracking
+    latest_prediction = predictions[-1] if predictions else None
+    
+    # Process all unvalidated predictions
+    for pred in predictions:
+        pred_timestamp = datetime.strptime(pred["timestamp"], "%Y-%m-%d %H:%M:%S")
         
-        # Monthly Deep Learning Analysis - Every 1st of month at 8 PM
-        current_day = datetime.now().day
-        if current_day == 1 and current_hour == 20 and 0 <= current_minute <= 15:
-            print("[INFO] Generating monthly deep learning analysis...")
-            monthly_insights = generate_deep_learning_insights(predictions, "monthly")
-            save_deep_learning_insights(monthly_insights)
-            
-            # Send comprehensive monthly report
-            monthly_report = format_deep_insights_summary(monthly_insights)
-            send_telegram_message(monthly_report, is_test=config["test_mode"]["enabled"])
-            print("[INFO] Monthly deep learning analysis completed")
-            
-            # Also trigger ML model retraining with insights
-            try:
-                ml_enhancer.learn_from_insights(monthly_insights)
-                print("[INFO] ML models updated with monthly insights")
-            except Exception as e:
-                print(f"[ERROR] Failed to update ML models with insights: {e}")
+        # Skip very recent predictions (less than 1 hour old)
+        if (datetime.now() - pred_timestamp).total_seconds() < 3600:
+            continue
         
-        print("[INFO] Enhanced prediction validation completed successfully")
+        # Initialize validation points if not exists
+        if "validation_points" not in pred:
+            pred["validation_points"] = []
         
-    except Exception as e:
-        print(f"[ERROR] Failed to validate predictions: {e}")
-        import traceback
-        traceback.print_exc()
+        # Extract professional analysis predictions
+        ai_pred = pred.get("predictions", {}).get("ai_prediction", "")
+        pro_analysis = pred.get("predictions", {}).get("professional_analysis", {})
+        ml_pred = pred.get("predictions", {}).get("ml_predictions", {})
+        
+        # Enhanced target extraction for professional format
+        if pro_analysis and "price_targets" in pro_analysis:
+            btc_targets = {
+                "current": pro_analysis["price_targets"].get("current"),
+                "target_1": pro_analysis["price_targets"].get("target_1"),
+                "target_2": pro_analysis["price_targets"].get("target_2"),
+                "stop_loss": pro_analysis["price_targets"].get("stop_loss"),
+                "scenario": pro_analysis.get("primary_scenario", "NEUTRAL")
+            }
+            
+            # Validate BTC targets
+            validate_professional_targets(pred, "BTC", btc_targets, prices["btc"], latest_prediction == pred, notifications)
+        
+        # Also validate any AI predictions (fallback/additional)
+        targets = extract_professional_targets(ai_pred)
+        for coin in ["BTC", "ETH"]:
+            if targets[coin]:
+                price = prices[coin.lower()]
+                validate_legacy_targets(pred, coin, targets[coin], price, latest_prediction == pred, notifications)
+        
+        # Collect ML training data
+        if not pred.get("ml_processed", False):
+            training_point = {
+                "prediction_data": pred,
+                "actual_btc_price": prices["btc"],
+                "actual_eth_price": prices["eth"],
+                "validation_points": pred["validation_points"],
+                "timestamp": datetime.now().isoformat()
+            }
+            ml_training_data.append(training_point)
+            pred["ml_processed"] = True
+        
+        # Mark as validated
+        if not pred.get("hourly_validated"):
+            pred["hourly_validated"] = True
+            pred["last_validation"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    # Save updated predictions (database or JSON)
+    if DATABASE_AVAILABLE:
+        try:
+            # Update predictions in database
+            for pred in predictions:
+                if pred.get("hourly_validated") and pred.get("validation_points"):
+                    db_manager.update_prediction_validation(
+                        pred["timestamp"], 
+                        pred["validation_points"], 
+                        pred.get("final_accuracy")
+                    )
+            print("[INFO] Updated predictions in database")
+        except Exception as e:
+            print(f"[ERROR] Failed to update database: {e}")
+    else:
+        # Save to JSON file
+        try:
+            with open(prediction_file, "w") as f:
+                json.dump(predictions, f, indent=4)
+            print("[INFO] Updated predictions in JSON file")
+        except Exception as e:
+            print(f"[ERROR] Failed to save predictions to JSON: {e}")
+    
+    # Train ML models with new data
+    if ml_training_data:
+        print(f"[INFO] Training ML models with {len(ml_training_data)} new data points")
+        try:
+            ml_enhancer.incremental_learning(ml_training_data)
+            print("[INFO] ML incremental learning completed")
+        except Exception as e:
+            print(f"[ERROR] ML training failed: {e}")
+    
+    # Send notifications for latest prediction
+    if notifications:
+        print(f"[INFO] Sending {len(notifications)} validation notifications")
+        for notification in notifications[-3:]:  # Limit to last 3 notifications
+            message = format_notification_message(notification)
+            send_telegram_message(message, is_test=config["test_mode"]["enabled"])
+    
+    # Check if it's time for accuracy report (7:45 PM and 7:45 AM)
+    current_hour = datetime.now().hour
+    current_minute = datetime.now().minute
+    
+    # Send accuracy report at 7:45 PM (19:45) for 8 AM predictions
+    # Send accuracy report at 7:45 AM (07:45) for 8 PM predictions from previous day
+    if (current_hour == 19 and 45 <= current_minute <= 59) or (current_hour == 7 and 45 <= current_minute <= 59):
+        if current_hour == 19:
+            report_type = "8 AM predictions"
+        else:
+            report_type = "8 PM predictions (previous day)"
+        
+        print(f"[INFO] Generating daily accuracy report for {report_type}")
+        accuracy_metrics = calculate_enhanced_accuracy(predictions)
+        accuracy_message = format_accuracy_summary(accuracy_metrics)
+        send_telegram_message(accuracy_message, is_test=config["test_mode"]["enabled"])
+        
+        # Also send improvement suggestions to AI
+        improvement_data = generate_improvement_suggestions(accuracy_metrics, predictions)
+        save_improvement_data(improvement_data)
+    
+    # Weekly Deep Learning Analysis - Every Sunday at 8 PM
+    current_weekday = datetime.now().weekday()  # 6 = Sunday
+    if current_weekday == 6 and current_hour == 20 and 0 <= current_minute <= 15:
+        print("[INFO] Generating weekly deep learning analysis...")
+        weekly_insights = generate_deep_learning_insights(predictions, "weekly")
+        save_deep_learning_insights(weekly_insights)
+        
+        # Send comprehensive weekly report
+        weekly_report = format_deep_insights_summary(weekly_insights)
+        send_telegram_message(weekly_report, is_test=config["test_mode"]["enabled"])
+        print("[INFO] Weekly deep learning analysis completed")
+    
+    # Monthly Deep Learning Analysis - Every 1st of month at 8 PM
+    current_day = datetime.now().day
+    if current_day == 1 and current_hour == 20 and 0 <= current_minute <= 15:
+        print("[INFO] Generating monthly deep learning analysis...")
+        monthly_insights = generate_deep_learning_insights(predictions, "monthly")
+        save_deep_learning_insights(monthly_insights)
+        
+        # Send comprehensive monthly report
+        monthly_report = format_deep_insights_summary(monthly_insights)
+        send_telegram_message(monthly_report, is_test=config["test_mode"]["enabled"])
+        print("[INFO] Monthly deep learning analysis completed")
+        
+        # Also trigger ML model retraining with insights
+        try:
+            ml_enhancer.learn_from_insights(monthly_insights)
+            print("[INFO] ML models updated with monthly insights")
+        except Exception as e:
+            print(f"[ERROR] Failed to update ML models with insights: {e}")
+    
+    print("[INFO] Enhanced prediction validation completed successfully")
 
 def validate_professional_targets(prediction, coin, targets, current_price, is_latest, notifications):
     """Validate professional analysis targets"""
@@ -451,10 +492,10 @@ def validate_professional_targets(prediction, coin, targets, current_price, is_l
                 notifications.append({
                     "type": "professional_target",
                     "coin": coin,
-                    "target_level": 1,
-                    "predicted_price": targets["target_1"],
-                    "actual_price": current_price,
-                    "scenario": scenario
+                    "target_level": targets["target_1"],
+                    "current_price": current_price,
+                    "scenario": scenario,
+                    "target_number": 1
                 })
     
     # Check target 2
@@ -475,12 +516,12 @@ def validate_professional_targets(prediction, coin, targets, current_price, is_l
                 notifications.append({
                     "type": "professional_target",
                     "coin": coin,
-                    "target_level": 2,
-                    "predicted_price": targets["target_2"],
-                    "actual_price": current_price,
-                    "scenario": scenario
+                    "target_level": targets["target_2"],
+                    "current_price": current_price,
+                    "scenario": scenario,
+                    "target_number": 2
                 })
-            
+    
     # Check stop loss
     if targets.get("stop_loss") and validate_target_hit(current_price, targets["stop_loss"], "STOP_LOSS", scenario):
         validation_point = {
@@ -499,8 +540,8 @@ def validate_professional_targets(prediction, coin, targets, current_price, is_l
                 notifications.append({
                     "type": "professional_stop_loss",
                     "coin": coin,
-                    "predicted_price": targets["stop_loss"],
-                    "actual_price": current_price,
+                    "stop_level": targets["stop_loss"],
+                    "current_price": current_price,
                     "scenario": scenario
                 })
 
@@ -510,30 +551,41 @@ def validate_legacy_targets(prediction, coin, targets, current_price, is_latest,
     pass
 
 def calculate_enhanced_accuracy(predictions):
-    """Calculate enhanced accuracy metrics for professional analysis with comprehensive trading metrics"""
+    """Calculate enhanced accuracy metrics with detailed insights for faster learning"""
     metrics = {
         "total_predictions": len(predictions),
         "validated_predictions": 0,
-        "professional_accuracy": 0,
-        "confidence_accuracy": 0,
-        "scenario_accuracy": 0,
-        "target_hit_rate": 0,
-        "stop_loss_rate": 0,
-        "average_confidence": 0,
-        "ml_improvement": 0,
-        # Enhanced trader-style metrics
+        
+        # Core Performance Metrics
         "win_rate_overall": 0,
         "win_rate_long": 0,
         "win_rate_short": 0,
-        "average_rr_ratio": 0,
         "r_expectancy": 0,
-        "best_timeframe": "unknown",
-        "best_setup_type": "unknown",
+        "average_rr_ratio": 0,
+        "profit_factor": 0,
+        
+        # Detailed Analysis - NEW ENHANCED SECTIONS
+        "best_setup_analysis": {},
+        "best_time_analysis": {},
+        "worst_mistakes_analysis": {},
+        "confluence_performance": {},
+        
+        # Volatility & Sentiment Analysis
         "volatility_performance": {},
         "sentiment_performance": {},
-        "confluence_performance": {},
-        "worst_mistakes": [],
-        "prediction_patterns": {}
+        
+        # Specific Insights Discovery
+        "key_insights": [],
+        "actionable_recommendations": [],
+        
+        # Performance by Market Conditions
+        "market_edge_analysis": {},
+        
+        # Mistake Patterns
+        "recurring_mistakes": {},
+        
+        # Setup Confluence Analysis
+        "signal_combination_performance": {}
     }
     
     recent_predictions = [p for p in predictions if datetime.strptime(p["timestamp"], "%Y-%m-%d %H:%M:%S") > datetime.now() - timedelta(days=30)]
@@ -541,14 +593,12 @@ def calculate_enhanced_accuracy(predictions):
     if not recent_predictions:
         return metrics
     
-    # Track detailed metrics for each prediction
-    long_trades = []
-    short_trades = []
+    # Extract all completed trades with enhanced metrics
     all_trades = []
-    timeframe_performance = {}
     setup_performance = {}
-    volatility_bins = {"low": [], "medium": [], "high": []}
-    sentiment_bins = {"fear": [], "neutral": [], "greed": []}
+    time_performance = {}
+    mistake_frequency = {}
+    confluence_performance = {}
     
     for pred in recent_predictions:
         if not pred.get("validation_points"):
@@ -556,207 +606,467 @@ def calculate_enhanced_accuracy(predictions):
             
         metrics["validated_predictions"] += 1
         
-        # Extract trade details
+        # Extract enhanced trade data
         trade_data = extract_trade_metrics(pred)
-        if not trade_data:
+        if not trade_data or trade_data["outcome"] == "PENDING":
             continue
             
         all_trades.append(trade_data)
         
-        # Categorize by direction
-        if trade_data["direction"] in ["LONG", "BUY", "STRONG BUY"]:
-            long_trades.append(trade_data)
-        elif trade_data["direction"] in ["SHORT", "SELL", "STRONG SELL"]:
-            short_trades.append(trade_data)
+        # Analyze setup types with confluence
+        setup_key = create_setup_signature(trade_data)
+        if setup_key not in setup_performance:
+            setup_performance[setup_key] = {"trades": [], "wins": 0, "total_r": 0, "signals": trade_data["signals_used"]}
         
-        # Group by timeframe (hour of prediction)
-        hour = datetime.strptime(pred["timestamp"], "%Y-%m-%d %H:%M:%S").hour
-        timeframe_key = f"{hour:02d}:00"
-        if timeframe_key not in timeframe_performance:
-            timeframe_performance[timeframe_key] = []
-        timeframe_performance[timeframe_key].append(trade_data)
+        setup_performance[setup_key]["trades"].append(trade_data)
+        setup_performance[setup_key]["total_r"] += trade_data["r_multiple"]
+        if trade_data["result"] == "WIN":
+            setup_performance[setup_key]["wins"] += 1
         
-        # Group by setup type (confluence signals)
-        setup_type = identify_setup_type(pred)
-        if setup_type not in setup_performance:
-            setup_performance[setup_type] = []
-        setup_performance[setup_type].append(trade_data)
+        # Analyze time performance
+        time_key = f"{trade_data['pred_hour']:02d}:00"
+        if time_key not in time_performance:
+            time_performance[time_key] = {"trades": [], "wins": 0, "total_r": 0}
         
-        # Group by volatility
-        volatility = trade_data.get("volatility", "medium")
-        if volatility in volatility_bins:
-            volatility_bins[volatility].append(trade_data)
+        time_performance[time_key]["trades"].append(trade_data)
+        time_performance[time_key]["total_r"] += trade_data["r_multiple"]
+        if trade_data["result"] == "WIN":
+            time_performance[time_key]["wins"] += 1
         
-        # Group by sentiment
-        fear_greed = trade_data.get("fear_greed", 50)
-        if fear_greed < 40:
-            sentiment_bins["fear"].append(trade_data)
-        elif fear_greed > 60:
-            sentiment_bins["greed"].append(trade_data)
-        else:
-            sentiment_bins["neutral"].append(trade_data)
-    
-    # Calculate overall metrics
-    if all_trades:
-        winning_trades = [t for t in all_trades if t["outcome"] in ["TP_HIT", "PARTIAL_WIN"]]
-        metrics["win_rate_overall"] = len(winning_trades) / len(all_trades)
+        # Analyze mistakes
+        for mistake in trade_data["mistake_tags"]:
+            if mistake not in mistake_frequency:
+                mistake_frequency[mistake] = {"count": 0, "total_loss_r": 0}
+            mistake_frequency[mistake]["count"] += 1
+            if trade_data["result"] == "LOSS":
+                mistake_frequency[mistake]["total_loss_r"] += abs(trade_data["r_multiple"])
         
-        # Calculate R-expectancy
-        total_r = sum(t["r_multiple"] for t in all_trades)
-        metrics["r_expectancy"] = total_r / len(all_trades)
+        # Analyze confluence performance
+        confluence_score = trade_data["confluence_score"]
+        confluence_bucket = "high" if confluence_score > 7 else "medium" if confluence_score > 4 else "low"
+        if confluence_bucket not in confluence_performance:
+            confluence_performance[confluence_bucket] = {"trades": [], "wins": 0, "total_r": 0}
         
-        # Average RR ratio
-        rr_ratios = [t["rr_ratio"] for t in all_trades if t["rr_ratio"] > 0]
-        metrics["average_rr_ratio"] = sum(rr_ratios) / len(rr_ratios) if rr_ratios else 0
+        confluence_performance[confluence_bucket]["trades"].append(trade_data)
+        confluence_performance[confluence_bucket]["total_r"] += trade_data["r_multiple"]
+        if trade_data["result"] == "WIN":
+            confluence_performance[confluence_bucket]["wins"] += 1
     
-    # Calculate directional win rates
-    if long_trades:
-        long_wins = [t for t in long_trades if t["outcome"] in ["TP_HIT", "PARTIAL_WIN"]]
-        metrics["win_rate_long"] = len(long_wins) / len(long_trades)
+    if not all_trades:
+        return metrics
     
-    if short_trades:
-        short_wins = [t for t in short_trades if t["outcome"] in ["TP_HIT", "PARTIAL_WIN"]]
-        metrics["win_rate_short"] = len(short_wins) / len(short_trades)
+    # Calculate Core Metrics
+    winning_trades = [t for t in all_trades if t["result"] == "WIN"]
+    losing_trades = [t for t in all_trades if t["result"] == "LOSS"]
+    long_trades = [t for t in all_trades if t["direction"] in ["BUY", "LONG", "BULLISH"]]
+    short_trades = [t for t in all_trades if t["direction"] in ["SELL", "SHORT", "BEARISH"]]
     
-    # Find best performing timeframe
-    best_timeframe_rate = 0
-    for timeframe, trades in timeframe_performance.items():
-        if len(trades) >= 3:  # Minimum sample size
-            wins = [t for t in trades if t["outcome"] in ["TP_HIT", "PARTIAL_WIN"]]
-            win_rate = len(wins) / len(trades)
-            if win_rate > best_timeframe_rate:
-                best_timeframe_rate = win_rate
-                metrics["best_timeframe"] = f"{timeframe} ({win_rate:.1%})"
+    metrics["win_rate_overall"] = len(winning_trades) / len(all_trades)
+    metrics["win_rate_long"] = len([t for t in long_trades if t["result"] == "WIN"]) / len(long_trades) if long_trades else 0
+    metrics["win_rate_short"] = len([t for t in short_trades if t["result"] == "WIN"]) / len(short_trades) if short_trades else 0
     
-    # Find best performing setup
-    best_setup_rate = 0
-    for setup, trades in setup_performance.items():
-        if len(trades) >= 3:
-            wins = [t for t in trades if t["outcome"] in ["TP_HIT", "PARTIAL_WIN"]]
-            win_rate = len(wins) / len(trades)
-            if win_rate > best_setup_rate:
-                best_setup_rate = win_rate
-                metrics["best_setup_type"] = f"{setup} ({win_rate:.1%})"
+    total_r = sum(t["r_multiple"] for t in all_trades)
+    metrics["r_expectancy"] = total_r / len(all_trades)
     
-    # Analyze volatility performance
-    for vol_level, trades in volatility_bins.items():
-        if trades:
-            wins = [t for t in trades if t["outcome"] in ["TP_HIT", "PARTIAL_WIN"]]
-            metrics["volatility_performance"][vol_level] = {
-                "win_rate": len(wins) / len(trades),
-                "avg_duration": sum(t["duration_hours"] for t in trades) / len(trades),
-                "trade_count": len(trades)
+    rr_ratios = [t["rr_ratio"] for t in all_trades if t["rr_ratio"] > 0]
+    metrics["average_rr_ratio"] = sum(rr_ratios) / len(rr_ratios) if rr_ratios else 0
+    
+    total_wins_r = sum(t["r_multiple"] for t in winning_trades)
+    total_losses_r = abs(sum(t["r_multiple"] for t in losing_trades))
+    metrics["profit_factor"] = total_wins_r / total_losses_r if total_losses_r > 0 else float('inf')
+    
+    # ENHANCED ANALYSIS - Best Setup Analysis
+    best_setups = {}
+    for setup, data in setup_performance.items():
+        if len(data["trades"]) >= 2:  # Minimum sample size
+            win_rate = data["wins"] / len(data["trades"])
+            avg_r = data["total_r"] / len(data["trades"])
+            expectancy = win_rate * avg_r
+            
+            best_setups[setup] = {
+                "win_rate": win_rate,
+                "avg_r_per_trade": avg_r,
+                "expectancy": expectancy,
+                "total_trades": len(data["trades"]),
+                "signals_used": data["signals"],
+                "confluence_score": calculate_confluence_score(data["signals"])
             }
     
-    # Analyze sentiment performance
-    for sentiment, trades in sentiment_bins.items():
-        if trades:
-            wins = [t for t in trades if t["outcome"] in ["TP_HIT", "PARTIAL_WIN"]]
-            metrics["sentiment_performance"][sentiment] = {
-                "win_rate": len(wins) / len(trades),
-                "avg_rr": sum(t["rr_ratio"] for t in trades) / len(trades),
-                "trade_count": len(trades)
+    # Sort by expectancy
+    metrics["best_setup_analysis"] = dict(sorted(best_setups.items(), key=lambda x: x[1]["expectancy"], reverse=True)[:5])
+    
+    # ENHANCED ANALYSIS - Best Time Analysis
+    best_times = {}
+    for time_slot, data in time_performance.items():
+        if len(data["trades"]) >= 2:
+            win_rate = data["wins"] / len(data["trades"])
+            avg_r = data["total_r"] / len(data["trades"])
+            
+            best_times[time_slot] = {
+                "win_rate": win_rate,
+                "avg_r_per_trade": avg_r,
+                "total_trades": len(data["trades"]),
+                "session": classify_time_session(int(time_slot.split(":")[0]))
             }
     
-    # Identify worst mistakes (recurring patterns)
-    mistake_patterns = identify_mistake_patterns(all_trades)
-    metrics["worst_mistakes"] = mistake_patterns[:5]  # Top 5 mistakes
+    metrics["best_time_analysis"] = dict(sorted(best_times.items(), key=lambda x: x[1]["win_rate"], reverse=True)[:5])
     
-    # Store prediction patterns for future analysis
-    metrics["prediction_patterns"] = {
-        "total_trades": len(all_trades),
-        "timeframe_distribution": {k: len(v) for k, v in timeframe_performance.items()},
-        "setup_distribution": {k: len(v) for k, v in setup_performance.items()},
-        "avg_confidence_winners": sum(t["confidence"] for t in all_trades if t["outcome"] in ["TP_HIT", "PARTIAL_WIN"]) / max(1, len([t for t in all_trades if t["outcome"] in ["TP_HIT", "PARTIAL_WIN"]])),
-        "avg_confidence_losers": sum(t["confidence"] for t in all_trades if t["outcome"] == "SL_HIT") / max(1, len([t for t in all_trades if t["outcome"] == "SL_HIT"]))
-    }
+    # ENHANCED ANALYSIS - Worst Mistakes Analysis
+    worst_mistakes = {}
+    for mistake, data in mistake_frequency.items():
+        if data["count"] >= 2:
+            avg_loss_per_mistake = data["total_loss_r"] / data["count"] if data["count"] > 0 else 0
+            impact_score = data["count"] * avg_loss_per_mistake
+            
+            worst_mistakes[mistake] = {
+                "frequency": data["count"],
+                "avg_loss_r": avg_loss_per_mistake,
+                "total_impact_r": data["total_loss_r"],
+                "impact_score": impact_score,
+                "mistake_description": get_mistake_description(mistake)
+            }
+    
+    metrics["worst_mistakes_analysis"] = dict(sorted(worst_mistakes.items(), key=lambda x: x[1]["impact_score"], reverse=True)[:5])
+    
+    # ENHANCED ANALYSIS - Confluence Performance
+    for confluence_level, data in confluence_performance.items():
+        if data["trades"]:
+            win_rate = data["wins"] / len(data["trades"])
+            avg_r = data["total_r"] / len(data["trades"])
+            
+            metrics["confluence_performance"][confluence_level] = {
+                "win_rate": win_rate,
+                "avg_r_per_trade": avg_r,
+                "total_trades": len(data["trades"])
+            }
+    
+    # Generate Key Insights (Examples from user requirements)
+    insights = []
+    
+    # Insight 1: Overall profitability despite win rate
+    if metrics["win_rate_overall"] < 0.6 and metrics["r_expectancy"] > 0.2:
+        insights.append(f"Profitable despite {metrics['win_rate_overall']:.0%} win rate due to {metrics['average_rr_ratio']:.1f}:1 RR ratio")
+    
+    # Insight 2: Direction bias analysis
+    if metrics["win_rate_long"] > metrics["win_rate_short"] + 0.15:
+        insights.append(f"Strong long bias: {metrics['win_rate_long']:.0%} vs {metrics['win_rate_short']:.0%} short success")
+    elif metrics["win_rate_short"] > metrics["win_rate_long"] + 0.15:
+        insights.append(f"Strong short bias: {metrics['win_rate_short']:.0%} vs {metrics['win_rate_long']:.0%} long success")
+    
+    # Insight 3: Confluence analysis
+    if "high" in metrics["confluence_performance"] and "low" in metrics["confluence_performance"]:
+        high_conf_wr = metrics["confluence_performance"]["high"]["win_rate"]
+        low_conf_wr = metrics["confluence_performance"]["low"]["win_rate"]
+        if high_conf_wr > low_conf_wr + 0.2:
+            insights.append(f"High confluence setups win {high_conf_wr:.0%} vs {low_conf_wr:.0%} for low confluence")
+    
+    # Insight 4: Best setup identification
+    if metrics["best_setup_analysis"]:
+        best_setup = list(metrics["best_setup_analysis"].keys())[0]
+        best_setup_data = metrics["best_setup_analysis"][best_setup]
+        if best_setup_data["win_rate"] > 0.7:
+            active_signals = [k for k, v in best_setup_data["signals_used"].items() if v]
+            insights.append(f"Best setup ({' + '.join(active_signals[:2])}) hits TP {best_setup_data['win_rate']:.0%} of the time")
+    
+    # Insight 5: Time-based performance
+    if metrics["best_time_analysis"]:
+        best_time = list(metrics["best_time_analysis"].keys())[0]
+        worst_time = list(metrics["best_time_analysis"].keys())[-1]
+        best_wr = metrics["best_time_analysis"][best_time]["win_rate"]
+        worst_wr = metrics["best_time_analysis"][worst_time]["win_rate"]
+        if best_wr > worst_wr + 0.2:
+            insights.append(f"{best_time} calls perform {best_wr:.0%} vs {worst_time} at {worst_wr:.0%}")
+    
+    metrics["key_insights"] = insights
+    
+    # Generate Actionable Recommendations
+    recommendations = []
+    
+    # Recommendation 1: Focus on best setups
+    if metrics["best_setup_analysis"]:
+        best_setup = list(metrics["best_setup_analysis"].keys())[0]
+        if metrics["best_setup_analysis"][best_setup]["expectancy"] > 0.5:
+            recommendations.append(f"Increase position size on {best_setup} setups (highest expectancy)")
+    
+    # Recommendation 2: Avoid worst mistakes
+    if metrics["worst_mistakes_analysis"]:
+        worst_mistake = list(metrics["worst_mistakes_analysis"].keys())[0]
+        recommendations.append(f"Priority fix: Avoid {worst_mistake} (most costly mistake)")
+    
+    # Recommendation 3: Time optimization
+    if metrics["best_time_analysis"]:
+        best_time = list(metrics["best_time_analysis"].keys())[0]
+        worst_time = list(metrics["best_time_analysis"].keys())[-1]
+        recommendations.append(f"Focus on {best_time} predictions, reduce {worst_time} frequency")
+    
+    # Recommendation 4: Confluence filtering
+    if "low" in metrics["confluence_performance"]:
+        low_conf_performance = metrics["confluence_performance"]["low"]
+        if low_conf_performance["win_rate"] < 0.4:
+            recommendations.append("Filter out low confluence setups (win rate too low)")
+    
+    metrics["actionable_recommendations"] = recommendations
     
     return metrics
 
+def create_setup_signature(trade_data):
+    """Create a unique signature for setup type based on signals used"""
+    signals = trade_data["signals_used"]
+    active_signals = [k for k, v in signals.items() if v]
+    
+    # Create meaningful combinations
+    if len(active_signals) == 0:
+        return "no_confluence"
+    elif len(active_signals) == 1:
+        return f"single_{active_signals[0]}"
+    elif len(active_signals) >= 3:
+        # Sort for consistency and take top 3 most important
+        signal_priority = ["technical_analysis", "support_resistance", "divergence", "volume_analysis", "rsi_momentum"]
+        prioritized = [s for s in signal_priority if s in active_signals]
+        others = [s for s in active_signals if s not in signal_priority]
+        top_signals = (prioritized + others)[:3]
+        return f"multi_{'_'.join(sorted(top_signals))}"
+    else:
+        return f"dual_{'_'.join(sorted(active_signals))}"
+
+def get_mistake_description(mistake_code):
+    """Get human-readable description of mistake patterns"""
+    descriptions = {
+        "poor_rr_ratio": "Taking trades with insufficient risk-reward ratio",
+        "ignored_greed_signal": "Buying during extreme greed conditions",
+        "ignored_fear_signal": "Selling during extreme fear conditions", 
+        "short_in_low_volatility": "Shorting during low volatility periods",
+        "insufficient_rr_for_volatility": "Inadequate RR ratio for high volatility",
+        "overconfident_loss": "High confidence predictions that failed",
+        "rushed_entry": "Entering trades too quickly without confirmation",
+        "bought_overbought": "Buying when RSI shows overbought conditions",
+        "sold_oversold": "Selling when RSI shows oversold conditions",
+        "bad_timing_session": "Trading during low-activity time sessions"
+    }
+    return descriptions.get(mistake_code, mistake_code.replace("_", " ").title())
+
 def extract_trade_metrics(prediction):
-    """Extract comprehensive trade metrics from a prediction for advanced analysis"""
+    """Extract comprehensive trade metrics from a prediction for advanced analysis - Enhanced Version"""
     try:
         # Get prediction details
         pro_analysis = prediction.get("predictions", {}).get("professional_analysis", {})
-        if not pro_analysis:
-            return None
-        
-        price_targets = pro_analysis.get("price_targets", {})
+        ai_prediction = prediction.get("predictions", {}).get("ai_prediction", "")
         market_data = prediction.get("market_data", {})
         
+        if not pro_analysis and not ai_prediction:
+            return None
+
+        # Extract price targets
+        if pro_analysis:
+            price_targets = pro_analysis.get("price_targets", {})
+            entry_price = price_targets.get("current", 0) or 0
+            tp_price = price_targets.get("target_1", 0) or 0
+            sl_price = price_targets.get("stop_loss", 0) or 0
+            direction = pro_analysis.get("primary_scenario", "NEUTRAL") or "NEUTRAL"
+            confidence = pro_analysis.get("confidence_level", "medium")
+            # Convert confidence level to numeric
+            if isinstance(confidence, str):
+                confidence_map = {"low": 30, "medium": 60, "high": 85}
+                confidence = confidence_map.get(confidence.lower(), 60)
+            elif confidence is None:
+                confidence = 60
+        else:
+            # Fallback to AI prediction parsing
+            entry_price = extract_price_from_text(ai_prediction, "entry")
+            tp_price = extract_price_from_text(ai_prediction, "target")
+            sl_price = extract_price_from_text(ai_prediction, "stop")
+            direction = extract_direction_from_text(ai_prediction)
+            confidence = 60  # Default confidence
+
         # Determine outcome from validation points
         validation_points = prediction.get("validation_points", [])
         outcome = "PENDING"
-        actual_exit_price = None
+        actual_exit_price = entry_price
         duration_hours = 0
+        hit_timestamp = None
         
         for vp in validation_points:
+            vp_time = datetime.strptime(vp["timestamp"], "%Y-%m-%d %H:%M:%S")
             if vp["type"] in ["PROFESSIONAL_TARGET_1", "PROFESSIONAL_TARGET_2"]:
                 outcome = "TP_HIT"
                 actual_exit_price = vp["actual_price"]
+                hit_timestamp = vp_time
                 break
             elif vp["type"] == "PROFESSIONAL_STOP_LOSS":
                 outcome = "SL_HIT"
                 actual_exit_price = vp["actual_price"]
+                hit_timestamp = vp_time
                 break
-        
-        if outcome == "PENDING":
-            return None  # Skip pending trades for analysis
-        
-        # Calculate metrics
-        entry_price = price_targets.get("current", 0)
-        tp_price = price_targets.get("target_1", 0)
-        sl_price = price_targets.get("stop_loss", 0)
+
+        # Calculate duration if trade completed
+        if hit_timestamp:
+            pred_time = datetime.strptime(prediction["timestamp"], "%Y-%m-%d %H:%M:%S")
+            duration_hours = (hit_timestamp - pred_time).total_seconds() / 3600
+
+        if outcome == "PENDING" and duration_hours == 0:
+            # Check if trade should be marked as breakeven or partial
+            current_time = datetime.now()
+            pred_time = datetime.strptime(prediction["timestamp"], "%Y-%m-%d %H:%M:%S")
+            hours_since = (current_time - pred_time).total_seconds() / 3600
+            
+            if hours_since > 24:  # After 24 hours, evaluate as breakeven if no hits
+                outcome = "BREAKEVEN"
+                actual_exit_price = entry_price
+
+        # Calculate comprehensive metrics
+        risk = abs(entry_price - sl_price) if sl_price and entry_price else 0
         
         # Calculate R-multiple (how many R risked vs gained)
-        risk = abs(entry_price - sl_price)
         if outcome == "TP_HIT":
             reward = abs(actual_exit_price - entry_price)
             r_multiple = reward / risk if risk > 0 else 0
-        else:  # SL_HIT
+        elif outcome == "SL_HIT":
             r_multiple = -1  # Lost 1R
-        
+        elif outcome == "BREAKEVEN":
+            r_multiple = 0
+        else:
+            # Pending - calculate unrealized R
+            current_btc = market_data.get("btc_price", entry_price)
+            unrealized_pnl = abs(current_btc - entry_price)
+            r_multiple = unrealized_pnl / risk if risk > 0 else 0
+            if direction in ["SELL", "SHORT", "BEARISH"] and current_btc > entry_price:
+                r_multiple = -r_multiple
+            elif direction in ["BUY", "LONG", "BULLISH"] and current_btc < entry_price:
+                r_multiple = -r_multiple
+
         # Calculate RR ratio
-        potential_reward = abs(tp_price - entry_price)
+        potential_reward = abs(tp_price - entry_price) if tp_price and entry_price else 0
         rr_ratio = potential_reward / risk if risk > 0 else 0
+
+        # Calculate actual price movement over 12h
+        pred_time = datetime.strptime(prediction["timestamp"], "%Y-%m-%d %H:%M:%S")
+        twelve_hour_mark = pred_time + timedelta(hours=12)
         
-        # Extract market conditions
-        btc_rsi = market_data.get("btc_rsi", 50)
-        fear_greed = market_data.get("fear_greed", 50)
+        # Try to find the 12h price from validation points or current price
+        twelve_hour_price = market_data.get("btc_price", entry_price)
+        actual_move_12h = abs(twelve_hour_price - entry_price) / entry_price if entry_price else 0
+
+        # Extract market conditions - ENHANCED
+        btc_rsi = market_data.get("btc_rsi", 50) or 50
+        fear_greed = market_data.get("fear_greed", 50) or 50
         if isinstance(fear_greed, dict):
-            fear_greed = fear_greed.get("index", 50)
-        
-        # Determine volatility level based on ATR or price movement
+            fear_greed = fear_greed.get("index", 50) or 50
+
+        # Enhanced volatility assessment using multiple indicators
+        btc_price = market_data.get("btc_price", 0) or 0
         volatility = "medium"  # Default
-        btc_price = market_data.get("btc_price", 0)
-        if btc_price:
-            # Simple volatility estimation
-            if abs(tp_price - entry_price) / entry_price > 0.05:
-                volatility = "high"
-            elif abs(tp_price - entry_price) / entry_price < 0.02:
-                volatility = "low"
+        volatility_score = 0
         
+        # Method 1: Price movement volatility
+        if tp_price and entry_price:
+            price_range_pct = abs(tp_price - entry_price) / entry_price
+            if price_range_pct > 0.05:  # >5% move expected
+                volatility_score += 2
+            elif price_range_pct > 0.03:  # >3% move expected
+                volatility_score += 1
+
+        # Method 2: RSI volatility (extreme RSI = high volatility)
+        if btc_rsi > 70 or btc_rsi < 30:
+            volatility_score += 1
+
+        # Method 3: Fear/Greed extremes = high volatility
+        if fear_greed > 75 or fear_greed < 25:
+            volatility_score += 1
+
+        # Classify volatility
+        if volatility_score >= 3:
+            volatility = "high"
+        elif volatility_score <= 1:
+            volatility = "low"
+
+        # Sentiment classification - ENHANCED
+        sentiment = "neutral"
+        if fear_greed < 25:
+            sentiment = "extreme_fear"
+        elif fear_greed < 40:
+            sentiment = "fear"
+        elif fear_greed > 75:
+            sentiment = "extreme_greed"
+        elif fear_greed > 60:
+            sentiment = "greed"
+
+        # Divergence detection (basic implementation)
+        divergence_present = False
+        # Check if price and sentiment are diverging
+        if direction in ["BUY", "LONG", "BULLISH"] and fear_greed < 40:
+            divergence_present = True  # Bullish divergence - buying in fear
+        elif direction in ["SELL", "SHORT", "BEARISH"] and fear_greed > 60:
+            divergence_present = True  # Bearish divergence - selling in greed
+
+        # Extract signals used (confluence analysis) - ENHANCED
+        signals_used = extract_confluence_signals(prediction)
+        setup_strength = len([s for s in signals_used.values() if s]) / len(signals_used) if signals_used else 0
+
+        # Mistake tagging - ENHANCED
+        mistake_tags = identify_trade_mistakes(prediction, outcome, market_data, {
+            "rr_ratio": rr_ratio,
+            "volatility": volatility,
+            "sentiment": sentiment,
+            "confidence": confidence,
+            "duration_hours": duration_hours
+        })
+
+        # Time analysis
+        pred_hour = datetime.strptime(prediction["timestamp"], "%Y-%m-%d %H:%M:%S").hour
+        time_session = classify_time_session(pred_hour)
+
         return {
+            # Core tracking data
             "timestamp": prediction["timestamp"],
-            "direction": pro_analysis.get("primary_scenario", "NEUTRAL"),
+            "prediction_id": prediction.get("date", "") + "_" + prediction.get("session", ""),
+            
+            # Trade details
+            "direction": direction,
             "entry_price": entry_price,
             "tp_price": tp_price,
             "sl_price": sl_price,
             "actual_exit_price": actual_exit_price,
             "outcome": outcome,
+            
+            # Performance metrics
             "r_multiple": r_multiple,
             "rr_ratio": rr_ratio,
             "duration_hours": duration_hours,
-            "confidence": pro_analysis.get("confidence_level", 50),
+            "actual_move_12h": actual_move_12h,
+            
+            # Market conditions
             "rsi": btc_rsi,
             "fear_greed": fear_greed,
+            "sentiment": sentiment,
             "volatility": volatility,
-            "bullish_probability": pro_analysis.get("bullish_probability", 50),
-            "bearish_probability": pro_analysis.get("bearish_probability", 50),
-            "strongest_signal": pro_analysis.get("key_factors", {}).get("strongest_signal", ["unknown", 0])[0]
+            "volatility_score": volatility_score,
+            "divergence_present": divergence_present,
+            
+            # Confluence & Setup
+            "signals_used": signals_used,
+            "setup_strength": setup_strength,
+            "confluence_score": calculate_confluence_score(signals_used),
+            
+            # Analysis
+            "confidence": confidence,
+            "time_session": time_session,
+            "pred_hour": pred_hour,
+            "mistake_tags": mistake_tags,
+            
+            # Additional context
+            "strongest_signal": pro_analysis.get("key_factors", {}).get("strongest_signal", ["unknown", 0])[0] if pro_analysis else "unknown",
+            "bullish_probability": pro_analysis.get("bullish_probability", 50) if pro_analysis else 50,
+            "bearish_probability": pro_analysis.get("bearish_probability", 50) if pro_analysis else 50,
+            
+            # Result classification
+            "result": "WIN" if outcome == "TP_HIT" else "LOSS" if outcome == "SL_HIT" else "NEUTRAL"
         }
+        
     except Exception as e:
-        print(f"[ERROR] Extracting trade metrics: {e}")
+        print(f"[ERROR] Extracting enhanced trade metrics: {e}")
+        import traceback
+        traceback.print_exc()
+        return {}
         return None
 
 def identify_setup_type(prediction):
@@ -1138,391 +1448,617 @@ def extract_price(price_str):
         pass
     return None
 
-def generate_deep_learning_insights(predictions, timeframe="weekly"):
-    """Generate comprehensive learning insights for AI improvement - Professional Trader Style"""
-    
-    # Filter predictions based on timeframe
-    if timeframe == "weekly":
-        cutoff = datetime.now() - timedelta(days=7)
-        period_name = "Weekly"
-    elif timeframe == "monthly":
-        cutoff = datetime.now() - timedelta(days=30)
-        period_name = "Monthly"
-    else:
-        cutoff = datetime.now() - timedelta(days=7)
-        period_name = "Weekly"
-    
-    recent_predictions = [p for p in predictions 
-                         if datetime.strptime(p["timestamp"], "%Y-%m-%d %H:%M:%S") > cutoff]
-    
-    if not recent_predictions:
-        return {"error": "No recent predictions for analysis"}
-    
-    # Extract all trades for analysis
-    all_trades = []
-    for pred in recent_predictions:
-        trade_data = extract_trade_metrics(pred)
-        if trade_data:
-            all_trades.append(trade_data)
-    
-    if not all_trades:
-        return {"error": "No completed trades for analysis"}
-    
+def generate_deep_learning_insights(predictions, period_type="weekly"):
+    """Generate comprehensive weekly/monthly trading insights for accelerated learning"""
     insights = {
-        "period": period_name,
-        "analysis_date": datetime.now().isoformat(),
-        "total_trades": len(all_trades),
-        "core_performance": {},
-        "setup_analysis": {},
-        "timing_analysis": {},
-        "market_condition_analysis": {},
-        "psychological_patterns": {},
-        "improvement_recommendations": [],
-        "strength_areas": [],
-        "edge_identification": {},
-        "risk_management_review": {},
-        "confluence_scoring": {}
+        "analysis_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "period_type": period_type,  # Use the passed parameter
+        
+        # Core Performance Review
+        "performance_summary": {},
+        
+        # Detailed Learning Insights
+        "best_setup_findings": {},
+        "best_time_findings": {},
+        "worst_mistake_patterns": {},
+        "market_edge_analysis": {},
+        
+        # Strategic Recommendations
+        "focus_areas": [],
+        "avoid_patterns": [],
+        "optimization_suggestions": [],
+        
+        # Learning Progress Tracking
+        "improvement_metrics": {},
+        "next_period_targets": {}
     }
     
-    # Core Performance Analysis
-    winning_trades = [t for t in all_trades if t["outcome"] in ["TP_HIT", "PARTIAL_WIN"]]
-    losing_trades = [t for t in all_trades if t["outcome"] == "SL_HIT"]
-    
-    insights["core_performance"] = {
-        "win_rate": len(winning_trades) / len(all_trades),
-        "total_r_gained": sum(t["r_multiple"] for t in all_trades),
-        "r_expectancy": sum(t["r_multiple"] for t in all_trades) / len(all_trades),
-        "average_winner": sum(t["r_multiple"] for t in winning_trades) / len(winning_trades) if winning_trades else 0,
-        "average_loser": sum(t["r_multiple"] for t in losing_trades) / len(losing_trades) if losing_trades else 0,
-        "largest_winner": max([t["r_multiple"] for t in winning_trades], default=0),
-        "largest_loser": min([t["r_multiple"] for t in losing_trades], default=0),
-        "profit_factor": abs(sum(t["r_multiple"] for t in winning_trades) / sum(t["r_multiple"] for t in losing_trades)) if losing_trades else float('inf')
-    }
-    
-    # Setup Type Analysis - What combinations work best?
-    setup_performance = {}
-    for trade in all_trades:
-        pred = next((p for p in recent_predictions if p["timestamp"] == trade["timestamp"]), None)
-        if pred:
-            setup_type = identify_setup_type(pred)
-            if setup_type not in setup_performance:
-                setup_performance[setup_type] = {"trades": [], "wins": 0, "total_r": 0}
+    try:
+        # Get enhanced accuracy metrics
+        enhanced_metrics = calculate_enhanced_accuracy(predictions)
+        
+        if not enhanced_metrics or enhanced_metrics["validated_predictions"] == 0:
+            insights["performance_summary"] = {"status": "insufficient_data", "message": "Need more completed trades for analysis"}
+            return insights
+        
+        # === PERFORMANCE SUMMARY ===
+        insights["performance_summary"] = {
+            "total_predictions": enhanced_metrics["total_predictions"],
+            "completed_trades": enhanced_metrics["validated_predictions"],
+            "overall_win_rate": f"{enhanced_metrics['win_rate_overall']:.1%}",
+            "long_win_rate": f"{enhanced_metrics['win_rate_long']:.1%}",
+            "short_win_rate": f"{enhanced_metrics['win_rate_short']:.1%}",
+            "r_expectancy": f"{enhanced_metrics['r_expectancy']:.2f}R",
+            "average_rr_ratio": f"{enhanced_metrics['average_rr_ratio']:.1f}:1",
+            "profit_factor": f"{enhanced_metrics['profit_factor']:.2f}" if enhanced_metrics['profit_factor'] != float('inf') else "∞",
+            "profitability_status": "Profitable" if enhanced_metrics['r_expectancy'] > 0 else "Unprofitable"
+        }
+        
+        # === BEST SETUP FINDINGS ===
+        if enhanced_metrics["best_setup_analysis"]:
+            setup_findings = {}
             
-            setup_performance[setup_type]["trades"].append(trade)
-            setup_performance[setup_type]["total_r"] += trade["r_multiple"]
-            if trade["outcome"] in ["TP_HIT", "PARTIAL_WIN"]:
-                setup_performance[setup_type]["wins"] += 1
-    
-    # Rank setups by performance
-    for setup, stats in setup_performance.items():
-        trade_count = len(stats["trades"])
-        if trade_count >= 2:  # Minimum sample size
-            stats["win_rate"] = stats["wins"] / trade_count
-            stats["avg_r"] = stats["total_r"] / trade_count
-            stats["expectancy_score"] = stats["win_rate"] * stats["avg_r"]
-    
-    insights["setup_analysis"] = {
-        setup: {
-            "win_rate": stats["win_rate"],
-            "avg_r_per_trade": stats["avg_r"],
-            "total_trades": len(stats["trades"]),
-            "expectancy_score": stats["expectancy_score"]
+            for i, (setup_name, setup_data) in enumerate(enhanced_metrics["best_setup_analysis"].items()):
+                if i >= 3:  # Top 3 setups
+                    break
+                    
+                active_signals = [k.replace("_", " ").title() for k, v in setup_data["signals_used"].items() if v]
+                
+                setup_findings[f"rank_{i+1}"] = {
+                    "setup_name": setup_name.replace("_", " ").title(),
+                    "win_rate": f"{setup_data['win_rate']:.1%}",
+                    "avg_return": f"{setup_data['avg_r_per_trade']:.2f}R",
+                    "expectancy": f"{setup_data['expectancy']:.2f}",
+                    "sample_size": setup_data['total_trades'],
+                    "signals_used": active_signals,
+                    "confluence_score": f"{setup_data['confluence_score']:.1f}/10",
+                    "recommendation": f"{'HIGH PRIORITY' if setup_data['expectancy'] > 0.5 else 'MODERATE'} - Focus on this setup"
+                }
+            
+            insights["best_setup_findings"] = setup_findings
+        
+        # === BEST TIME FINDINGS ===
+        if enhanced_metrics["best_time_analysis"]:
+            time_findings = {}
+            
+            for i, (time_slot, time_data) in enumerate(enhanced_metrics["best_time_analysis"].items()):
+                if i >= 3:  # Top 3 times
+                    break
+                    
+                time_findings[f"rank_{i+1}"] = {
+                    "time_slot": time_slot,
+                    "session": time_data['session'].replace("_", " ").title(),
+                    "win_rate": f"{time_data['win_rate']:.1%}",
+                    "avg_return": f"{time_data['avg_r_per_trade']:.2f}R",
+                    "sample_size": time_data['total_trades'],
+                    "recommendation": f"{'OPTIMAL' if time_data['win_rate'] > 0.6 else 'GOOD'} trading window"
+                }
+            
+            insights["best_time_findings"] = time_findings
+        
+        # === WORST MISTAKE PATTERNS ===
+        if enhanced_metrics["worst_mistakes_analysis"]:
+            mistake_findings = {}
+            
+            for i, (mistake_code, mistake_data) in enumerate(enhanced_metrics["worst_mistakes_analysis"].items()):
+                if i >= 3:  # Top 3 mistakes
+                    break
+                    
+                mistake_findings[f"priority_{i+1}"] = {
+                    "mistake_type": mistake_data['mistake_description'],
+                    "frequency": mistake_data['frequency'],
+                    "avg_loss_per_occurrence": f"{mistake_data['avg_loss_r']:.2f}R",
+                    "total_cost": f"{mistake_data['total_impact_r']:.2f}R",
+                    "impact_score": f"{mistake_data['impact_score']:.1f}",
+                    "fix_priority": "CRITICAL" if mistake_data['impact_score'] > 2.0 else "HIGH",
+                    "suggested_fix": get_mistake_fix_suggestion(mistake_code)
+                }
+            
+            insights["worst_mistake_patterns"] = mistake_findings
+        
+        # === MARKET EDGE ANALYSIS ===
+        confluence_analysis = {}
+        if enhanced_metrics["confluence_performance"]:
+            for level, data in enhanced_metrics["confluence_performance"].items():
+                confluence_analysis[f"{level}_confluence"] = {
+                    "win_rate": f"{data['win_rate']:.1%}",
+                    "avg_return": f"{data['avg_r_per_trade']:.2f}R",
+                    "trade_count": data['total_trades'],
+                    "recommendation": get_confluence_recommendation(level, data['win_rate'])
+                }
+        
+        insights["market_edge_analysis"] = {
+            "confluence_performance": confluence_analysis,
+            "key_edge_discovery": enhanced_metrics.get("key_insights", []),
+            "market_bias": determine_market_bias(enhanced_metrics)
         }
-        for setup, stats in setup_performance.items()
-        if len(stats["trades"]) >= 2
-    }
-    
-    # Timing Analysis - When do we perform best?
-    hour_performance = {}
-    for trade in all_trades:
-        hour = datetime.strptime(trade["timestamp"], "%Y-%m-%d %H:%M:%S").hour
-        if hour not in hour_performance:
-            hour_performance[hour] = {"trades": [], "wins": 0, "total_r": 0}
         
-        hour_performance[hour]["trades"].append(trade)
-        hour_performance[hour]["total_r"] += trade["r_multiple"]
-        if trade["outcome"] in ["TP_HIT", "PARTIAL_WIN"]:
-            hour_performance[hour]["wins"] += 1
-    
-    # Calculate timing performance
-    for hour, stats in hour_performance.items():
-        trade_count = len(stats["trades"])
-        if trade_count >= 2:
-            stats["win_rate"] = stats["wins"] / trade_count
-            stats["avg_r"] = stats["total_r"] / trade_count
-    
-    insights["timing_analysis"] = {
-        f"{hour:02d}:00": {
-            "win_rate": stats["win_rate"],
-            "avg_r_per_trade": stats["avg_r"],
-            "total_trades": len(stats["trades"])
+        # === STRATEGIC RECOMMENDATIONS ===
+        focus_areas = []
+        avoid_patterns = []
+        optimization_suggestions = []
+        
+        # Focus Areas
+        if enhanced_metrics["best_setup_analysis"]:
+            best_setup = list(enhanced_metrics["best_setup_analysis"].keys())[0]
+            best_setup_data = enhanced_metrics["best_setup_analysis"][best_setup]
+            if best_setup_data["expectancy"] > 0.3:
+                focus_areas.append(f"Increase frequency of {best_setup.replace('_', ' ')} setups (highest expectancy)")
+        
+        if enhanced_metrics["best_time_analysis"]:
+            best_time = list(enhanced_metrics["best_time_analysis"].keys())[0]
+            best_time_data = enhanced_metrics["best_time_analysis"][best_time]
+            if best_time_data["win_rate"] > 0.65:
+                focus_areas.append(f"Schedule more predictions around {best_time} ({best_time_data['session'].replace('_', ' ')})")
+        
+        # Avoid Patterns
+        if enhanced_metrics["worst_mistakes_analysis"]:
+            worst_mistake = list(enhanced_metrics["worst_mistakes_analysis"].keys())[0]
+            worst_mistake_data = enhanced_metrics["worst_mistakes_analysis"][worst_mistake]
+            avoid_patterns.append(f"PRIORITY: Stop {worst_mistake_data['mistake_description'].lower()}")
+        
+        if "low" in enhanced_metrics["confluence_performance"]:
+            low_conf_data = enhanced_metrics["confluence_performance"]["low"]
+            if low_conf_data["win_rate"] < 0.4:
+                avoid_patterns.append("Filter out low confluence setups (win rate below 40%)")
+        
+        # Optimization Suggestions
+        if enhanced_metrics["win_rate_overall"] < 0.5 and enhanced_metrics["average_rr_ratio"] < 2.0:
+            optimization_suggestions.append("Increase RR ratio targets to 2:1 minimum to offset low win rate")
+        
+        if enhanced_metrics["r_expectancy"] < 0.1:
+            optimization_suggestions.append("Focus on confluence improvement - current expectancy too low")
+        
+        optimization_suggestions.extend(enhanced_metrics.get("actionable_recommendations", []))
+        
+        insights["focus_areas"] = focus_areas[:3]  # Top 3
+        insights["avoid_patterns"] = avoid_patterns[:3]  # Top 3
+        insights["optimization_suggestions"] = optimization_suggestions[:5]  # Top 5
+        
+        # === IMPROVEMENT METRICS ===
+        # Compare with previous period (simplified - would need historical data)
+        insights["improvement_metrics"] = {
+            "current_expectancy": enhanced_metrics["r_expectancy"],
+            "current_win_rate": enhanced_metrics["win_rate_overall"],
+            "current_rr_ratio": enhanced_metrics["average_rr_ratio"],
+            "trend_analysis": "Requires historical data for comparison",
+            "learning_velocity": calculate_learning_velocity(enhanced_metrics)
         }
-        for hour, stats in hour_performance.items()
-        if len(stats["trades"]) >= 2
-    }
-    
-    # Market Condition Analysis
-    volatility_performance = {"low": [], "medium": [], "high": []}
-    sentiment_performance = {"fear": [], "neutral": [], "greed": []}
-    
-    for trade in all_trades:
-        volatility_performance[trade["volatility"]].append(trade)
         
-        if trade["fear_greed"] < 40:
-            sentiment_performance["fear"].append(trade)
-        elif trade["fear_greed"] > 60:
-            sentiment_performance["greed"].append(trade)
-        else:
-            sentiment_performance["neutral"].append(trade)
-    
-    # Analyze market conditions
-    insights["market_condition_analysis"] = {
-        "volatility": {},
-        "sentiment": {}
-    }
-    
-    for vol_level, trades in volatility_performance.items():
-        if trades:
-            wins = [t for t in trades if t["outcome"] in ["TP_HIT", "PARTIAL_WIN"]]
-            insights["market_condition_analysis"]["volatility"][vol_level] = {
-                "win_rate": len(wins) / len(trades),
-                "avg_r": sum(t["r_multiple"] for t in trades) / len(trades),
-                "trade_count": len(trades)
-            }
-    
-    for sentiment, trades in sentiment_performance.items():
-        if trades:
-            wins = [t for t in trades if t["outcome"] in ["TP_HIT", "PARTIAL_WIN"]]
-            insights["market_condition_analysis"]["sentiment"][sentiment] = {
-                "win_rate": len(wins) / len(trades),
-                "avg_r": sum(t["r_multiple"] for t in trades) / len(trades),
-                "trade_count": len(trades)
-            }
-    
-    # Psychological Pattern Analysis
-    confidence_vs_outcome = {"high_conf_winners": [], "high_conf_losers": [], "low_conf_winners": [], "low_conf_losers": []}
-    
-    for trade in all_trades:
-        if trade["confidence"] > 70:
-            if trade["outcome"] in ["TP_HIT", "PARTIAL_WIN"]:
-                confidence_vs_outcome["high_conf_winners"].append(trade)
-            else:
-                confidence_vs_outcome["high_conf_losers"].append(trade)
-        else:
-            if trade["outcome"] in ["TP_HIT", "PARTIAL_WIN"]:
-                confidence_vs_outcome["low_conf_winners"].append(trade)
-            else:
-                confidence_vs_outcome["low_conf_losers"].append(trade)
-    
-    insights["psychological_patterns"] = {
-        "overconfidence_bias": len(confidence_vs_outcome["high_conf_losers"]) / max(1, len(confidence_vs_outcome["high_conf_winners"]) + len(confidence_vs_outcome["high_conf_losers"])),
-        "underconfidence_bias": len(confidence_vs_outcome["low_conf_winners"]) / max(1, len(confidence_vs_outcome["low_conf_winners"]) + len(confidence_vs_outcome["low_conf_losers"])),
-        "confidence_calibration": (len(confidence_vs_outcome["high_conf_winners"]) - len(confidence_vs_outcome["high_conf_losers"])) / max(1, len(all_trades))
-    }
-    
-    # Generate Improvement Recommendations
-    recommendations = []
-    
-    # Win rate analysis
-    win_rate = insights["core_performance"]["win_rate"]
-    if win_rate < 0.4:
-        recommendations.append({
-            "priority": "HIGH",
-            "area": "Entry Quality",
-            "issue": f"Win rate only {win_rate:.1%} - need better entry timing",
-            "suggestion": "Focus on higher confluence setups and wait for better entries"
-        })
-    elif win_rate > 0.7:
-        recommendations.append({
-            "priority": "MEDIUM",
-            "area": "Risk Management", 
-            "issue": f"Win rate {win_rate:.1%} is very high - might be taking too little risk",
-            "suggestion": "Consider increasing position sizes or expanding target distances"
-        })
-    
-    # R-expectancy analysis
-    r_exp = insights["core_performance"]["r_expectancy"]
-    if r_exp < 0:
-        recommendations.append({
-            "priority": "CRITICAL",
-            "area": "System Overhaul",
-            "issue": f"Negative expectancy {r_exp:.2f}R - losing money",
-            "suggestion": "Stop trading and analyze what's not working. Focus on best setups only."
-        })
-    elif r_exp < 0.2:
-        recommendations.append({
-            "priority": "HIGH", 
-            "area": "Risk-Reward",
-            "issue": f"Low expectancy {r_exp:.2f}R - barely profitable",
-            "suggestion": "Improve RR ratios and/or win rate. Consider tighter stop losses or wider targets."
-        })
-    
-    # Setup performance analysis
-    if insights["setup_analysis"]:
-        best_setup = max(insights["setup_analysis"].items(), key=lambda x: x[1]["expectancy_score"])
-        worst_setup = min(insights["setup_analysis"].items(), key=lambda x: x[1]["expectancy_score"])
+        # === NEXT PERIOD TARGETS ===
+        current_wr = enhanced_metrics["win_rate_overall"]
+        current_expectancy = enhanced_metrics["r_expectancy"]
         
-        if best_setup[1]["expectancy_score"] > 0.3:
-            recommendations.append({
-                "priority": "MEDIUM",
-                "area": "Setup Focus",
-                "issue": f"Best setup '{best_setup[0]}' has {best_setup[1]['expectancy_score']:.2f} expectancy",
-                "suggestion": f"Focus more on {best_setup[0]} setups - they're working well"
-            })
+        target_wr = min(current_wr + 0.05, 0.8)  # Aim for 5% improvement, max 80%
+        target_expectancy = max(current_expectancy + 0.1, 0.3)  # Aim for +0.1R, min 0.3R
         
-        if worst_setup[1]["expectancy_score"] < 0:
-            recommendations.append({
-                "priority": "HIGH",
-                "area": "Setup Filtering", 
-                "issue": f"Worst setup '{worst_setup[0]}' losing money",
-                "suggestion": f"Avoid {worst_setup[0]} setups until pattern improves"
-            })
-    
-    # Market condition recommendations
-    vol_analysis = insights["market_condition_analysis"]["volatility"]
-    if vol_analysis:
-        best_vol = max(vol_analysis.items(), key=lambda x: x[1]["win_rate"])
-        if best_vol[1]["win_rate"] > 0.6:
-            recommendations.append({
-                "priority": "MEDIUM",
-                "area": "Market Selection",
-                "issue": f"Perform best in {best_vol[0]} volatility ({best_vol[1]['win_rate']:.1%} win rate)",
-                "suggestion": f"Increase position sizes during {best_vol[0]} volatility periods"
-            })
-    
-    insights["improvement_recommendations"] = sorted(recommendations, key=lambda x: {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}[x["priority"]])
-    
-    # Identify Strength Areas
-    strengths = []
-    
-    if win_rate > 0.6:
-        strengths.append(f"High win rate ({win_rate:.1%}) - good at picking direction")
-    
-    if r_exp > 0.3:
-        strengths.append(f"Strong expectancy ({r_exp:.2f}R) - profitable system")
-    
-    profit_factor = insights["core_performance"]["profit_factor"]
-    if profit_factor > 2:
-        strengths.append(f"Excellent profit factor ({profit_factor:.1f}) - winners much larger than losers")
-    
-    # Timing strengths
-    if insights["timing_analysis"]:
-        best_time = max(insights["timing_analysis"].items(), key=lambda x: x[1]["win_rate"])
-        if best_time[1]["win_rate"] > 0.7:
-            strengths.append(f"Strong performance at {best_time[0]} ({best_time[1]['win_rate']:.1%} win rate)")
-    
-    insights["strength_areas"] = strengths
+        insights["next_period_targets"] = {
+            "target_win_rate": f"{target_wr:.1%}",
+            "target_expectancy": f"{target_expectancy:.2f}R",
+            "target_mistake_reduction": "50% reduction in top mistake frequency",
+            "target_confluence_improvement": "Increase high confluence trade percentage by 20%",
+            "focus_metric": "R-expectancy" if current_expectancy < 0.2 else "Win rate optimization"
+        }
+        
+    except Exception as e:
+        print(f"[ERROR] Generating deep learning insights: {e}")
+        import traceback
+        traceback.print_exc()
+        insights["error"] = str(e)
     
     return insights
 
+def get_mistake_fix_suggestion(mistake_code):
+    """Get specific suggestions for fixing trading mistakes"""
+    suggestions = {
+        "poor_rr_ratio": "Set minimum 2:1 RR ratio rule, widen stop losses or better entry timing",
+        "ignored_greed_signal": "Create rule: No longs when Fear & Greed > 75, wait for cooldown",
+        "ignored_fear_signal": "Create rule: No shorts when Fear & Greed < 25, look for bounces",
+        "short_in_low_volatility": "Avoid shorts when expected move < 3%, focus on longs in low vol",
+        "insufficient_rr_for_volatility": "High volatility trades need 3:1+ RR, adjust targets",
+        "overconfident_loss": "Cap position size when confidence > 80%, add confirmation delays",
+        "rushed_entry": "Implement 30-min confirmation delay, wait for retests",
+        "bought_overbought": "RSI > 70 = wait for pullback, use RSI divergence instead",
+        "sold_oversold": "RSI < 30 = wait for relief bounce, look for reversal patterns",
+        "bad_timing_session": "Avoid predictions during 00:00-03:00 UTC (low liquidity)"
+    }
+    return suggestions.get(mistake_code, "Review and create specific rules to avoid this pattern")
+
+def get_confluence_recommendation(level, win_rate):
+    """Get recommendations based on confluence performance"""
+    if level == "high" and win_rate > 0.7:
+        return "EXCELLENT - Prioritize these setups"
+    elif level == "high" and win_rate > 0.5:
+        return "GOOD - Continue focusing on high confluence"
+    elif level == "medium" and win_rate > 0.6:
+        return "SOLID - Good backup when high confluence unavailable"
+    elif level == "low" and win_rate < 0.4:
+        return "AVOID - Filter out low confluence setups"
+    else:
+        return "MONITOR - Track performance closely"
+
+def determine_market_bias(metrics):
+    """Determine overall market bias and trading preferences"""
+    long_wr = metrics["win_rate_long"]
+    short_wr = metrics["win_rate_short"]
+    
+    if long_wr > short_wr + 0.15:
+        return f"LONG BIAS - {long_wr:.1%} vs {short_wr:.1%} (favor bullish setups)"
+    elif short_wr > long_wr + 0.15:
+        return f"SHORT BIAS - {short_wr:.1%} vs {long_wr:.1%} (favor bearish setups)"
+    else:
+        return f"BALANCED - Similar performance both directions ({long_wr:.1%} L / {short_wr:.1%} S)"
+
+def calculate_learning_velocity(metrics):
+    """Calculate how fast the system is learning (simplified)"""
+    expectancy = metrics["r_expectancy"]
+    win_rate = metrics["win_rate_overall"]
+    
+    if expectancy > 0.3 and win_rate > 0.6:
+        return "FAST - Excellent performance metrics"
+    elif expectancy > 0.1 and win_rate > 0.5:
+        return "MODERATE - Good progress, room for improvement"
+    elif expectancy > 0:
+        return "SLOW - Positive but needs optimization"
+    else:
+        return "NEGATIVE - Requires major strategy revision"
+
 def save_deep_learning_insights(insights):
     """Save deep learning insights for AI evolution"""
-    insights_file = "deep_learning_insights.json"
+    period_type = insights.get('period_type', 'weekly')
+    analysis_date = insights.get('analysis_date', datetime.now().isoformat())
     
-    all_insights = []
-    if os.path.exists(insights_file):
+    # Extract period from analysis_date for database storage
+    period_str = analysis_date[:10]  # YYYY-MM-DD format
+    if period_type == 'weekly':
+        # Convert to week format (e.g., 2025-W20)
+        date_obj = datetime.fromisoformat(analysis_date)
+        week_num = date_obj.isocalendar()[1]
+        period_str = f"{date_obj.year}-W{week_num:02d}"
+    elif period_type == 'monthly':
+        # Convert to month format (e.g., 2025-05)
+        period_str = analysis_date[:7]  # YYYY-MM format
+    
+    # Try to save to database first
+    success = False
+    if DATABASE_AVAILABLE:
         try:
-            with open(insights_file, "r") as f:
-                all_insights = json.load(f)
-        except Exception:
-            all_insights = []
+            success = db_manager.save_learning_insight(period_type, period_str, insights)
+            if success:
+                print(f"[INFO] Deep learning insights saved to database for {period_type} period {period_str}")
+        except Exception as e:
+            print(f"[ERROR] Failed to save insights to database: {e}")
     
-    all_insights.append(insights)
-    
-    # Keep only last 3 months of insights
-    cutoff = datetime.now() - timedelta(days=90)
-    all_insights = [insight for insight in all_insights 
-                   if datetime.fromisoformat(insight["analysis_date"]) > cutoff]
-    
-    with open(insights_file, "w") as f:
-        json.dump(all_insights, f, indent=4)
-    
-    print(f"[INFO] Deep learning insights saved - {len(all_insights)} total analyses stored")
+    # Fallback to JSON file if database failed or not available
+    if not success:
+        insights_file = "deep_learning_insights.json"
+        
+        all_insights = []
+        if os.path.exists(insights_file):
+            try:
+                with open(insights_file, "r") as f:
+                    all_insights = json.load(f)
+            except Exception:
+                all_insights = []
+        
+        all_insights.append(insights)
+        
+        # Keep only last 3 months of insights
+        cutoff = datetime.now() - timedelta(days=90)
+        all_insights = [insight for insight in all_insights 
+                       if datetime.fromisoformat(insight["analysis_date"]) > cutoff]
+        
+        with open(insights_file, "w") as f:
+            json.dump(all_insights, f, indent=4)
+        
+        print(f"[INFO] Deep learning insights saved to JSON file - {len(all_insights)} total analyses stored")
 
 def format_deep_insights_summary(insights):
     """Format deep insights for Telegram - Professional Review Style"""
     if "error" in insights:
         return f"📊 Deep Analysis: {insights['error']}"
     
-    report = f"🧠 <b>{insights['period'].upper()} DEEP LEARNING ANALYSIS</b>\n"
+    report = f"🧠 <b>{insights['period_type'].upper()} DEEP LEARNING ANALYSIS</b>\n"
     report += f"📅 {datetime.now().strftime('%Y-%m-%d')}\n"
     report += f"{'═' * 40}\n\n"
     
-    core = insights["core_performance"]
+    core = insights.get("performance_summary", {})
     
     # Executive Summary
     report += f"<b>📈 EXECUTIVE SUMMARY</b>\n"
-    report += f"• Total Trades: {insights['total_trades']}\n"
-    report += f"• Win Rate: {core['win_rate']:.1%}\n"
-    report += f"• R-Expectancy: {core['r_expectancy']:.2f}R\n"
-    report += f"• Profit Factor: {core['profit_factor']:.1f}\n"
-    report += f"• Total R Gained: {core['total_r_gained']:+.1f}R\n\n"
+    report += f"• Total Trades: {core.get('completed_trades', 0)}\n"
+    report += f"• Win Rate: {core.get('overall_win_rate', '0%')}\n"
+    report += f"• R-Expectancy: {core.get('r_expectancy', '0.00R')}\n"
+    report += f"• Profit Factor: {core.get('profit_factor', '0.0')}\n"
+    report += f"• Status: {core.get('profitability_status', 'Unknown')}\n\n"
     
     # Top Performing Setups
-    if insights["setup_analysis"]:
+    if insights.get("best_setup_findings"):
         report += f"<b>⭐ BEST PERFORMING SETUPS</b>\n"
-        sorted_setups = sorted(insights["setup_analysis"].items(), 
-                              key=lambda x: x[1]["expectancy_score"], reverse=True)
-        
-        for i, (setup, stats) in enumerate(sorted_setups[:3], 1):
-            setup_name = setup.replace('_', ' ').title()
-            report += f"{i}. {setup_name}\n"
-            report += f"   • Win Rate: {stats['win_rate']:.1%}\n"
-            report += f"   • Avg R: {stats['avg_r_per_trade']:+.2f}R\n"
-            report += f"   • Trades: {stats['total_trades']}\n\n"
+        for rank_key, setup in insights["best_setup_findings"].items():
+            rank_num = rank_key.split('_')[1]
+            signals_text = ', '.join(setup.get('signals_used', [])[:2]) if setup.get('signals_used') else 'None'
+            report += f"{rank_num}. {setup.get('setup_name', 'Unknown')}\n"
+            report += f"   • Win Rate: {setup.get('win_rate', '0%')}\n"
+            report += f"   • Avg R: {setup.get('avg_return', '0.00R')}\n"
+            report += f"   • Trades: {setup.get('sample_size', 0)}\n"
+            report += f"   • Signals: {signals_text}\n\n"
     
     # Best Timing
-    if insights["timing_analysis"]:
+    if insights.get("best_time_findings"):
         report += f"<b>⏰ OPTIMAL TIMING</b>\n"
-        sorted_times = sorted(insights["timing_analysis"].items(),
-                             key=lambda x: x[1]["win_rate"], reverse=True)
         
-        for i, (time, stats) in enumerate(sorted_times[:3], 1):
-            report += f"{i}. {time} - {stats['win_rate']:.1%} ({stats['total_trades']} trades)\n"
+        for rank_key, time_data in insights["best_time_findings"].items():
+            rank_num = rank_key.split('_')[1]
+            report += f"{rank_num}. {time_data.get('time_slot', 'Unknown')} ({time_data.get('session', 'Unknown')}) - {time_data.get('win_rate', '0%')}\n"
         report += "\n"
     
-    # Market Conditions
-    vol_perf = insights["market_condition_analysis"]["volatility"]
-    if vol_perf:
-        report += f"<b>🌊 VOLATILITY EDGE</b>\n"
-        for vol_level, stats in vol_perf.items():
-            if stats['trade_count'] >= 2:
-                report += f"• {vol_level.title()}: {stats['win_rate']:.1%} ({stats['avg_r']:+.2f}R avg)\n"
+    # Market Edge Analysis  
+    market_edge = insights.get("market_edge_analysis", {})
+    confluence_perf = market_edge.get("confluence_performance", {})
+    if confluence_perf:
+        report += f"<b>🌊 CONFLUENCE PERFORMANCE</b>\n"
+        for level, stats in confluence_perf.items():
+            level_name = level.replace('_confluence', '').title()
+            report += f"• {level_name}: {stats.get('win_rate', '0%')} ({stats.get('trade_count', 0)} trades)\n"
         report += "\n"
     
-    # Critical Improvements
-    if insights["improvement_recommendations"]:
-        report += f"<b>🚨 CRITICAL IMPROVEMENTS</b>\n"
-        critical_recs = [r for r in insights["improvement_recommendations"] 
-                        if r["priority"] in ["CRITICAL", "HIGH"]]
-        
-        for i, rec in enumerate(critical_recs[:3], 1):
-            report += f"{i}. {rec['area']}: {rec['suggestion']}\n"
+    # Key Insights
+    key_insights = market_edge.get("key_edge_discovery", [])
+    if key_insights:
+        report += f"<b>💡 KEY INSIGHTS</b>\n"
+        for i, insight in enumerate(key_insights[:3], 1):
+            report += f"{i}. {insight}\n"
         report += "\n"
     
-    # Key Strengths
-    if insights["strength_areas"]:
-        report += f"<b>💪 KEY STRENGTHS</b>\n"
-        for i, strength in enumerate(insights["strength_areas"][:3], 1):
-            report += f"{i}. {strength}\n"
+    # Worst Mistakes
+    if insights.get("worst_mistake_patterns"):
+        report += f"<b>⚠️ TOP MISTAKES TO AVOID</b>\n"
+        for priority_key, mistake in insights["worst_mistake_patterns"].items():
+            priority_num = priority_key.split('_')[1]
+            report += f"{priority_num}. {mistake.get('mistake_type', 'Unknown')} (Impact: {mistake.get('impact_score', '0')})\n"
         report += "\n"
     
-    # Psychological Insights
-    psych = insights["psychological_patterns"]
-    if psych:
-        report += f"<b>🧠 PSYCHOLOGICAL INSIGHTS</b>\n"
-        if psych["overconfidence_bias"] > 0.3:
-            report += f"• ⚠️ Overconfidence detected ({psych['overconfidence_bias']:.1%})\n"
-        
-        if psych["confidence_calibration"] > 0.1:
-            report += f"• ✅ Good confidence calibration\n"
-        elif psych["confidence_calibration"] < -0.1:
-            report += f"• ❌ Poor confidence calibration\n"
+    # Focus Areas
+    if insights.get("focus_areas"):
+        report += f"<b>🎯 FOCUS AREAS</b>\n"
+        for i, area in enumerate(insights["focus_areas"], 1):
+            report += f"{i}. {area}\n"
+        report += "\n"
+    
+    # Optimization Suggestions
+    if insights.get("optimization_suggestions"):
+        report += f"<b>🔧 OPTIMIZATION SUGGESTIONS</b>\n"
+        for i, suggestion in enumerate(insights["optimization_suggestions"][:3], 1):
+            report += f"{i}. {suggestion}\n"
         report += "\n"
     
     report += f"<i>🚀 Evolution in progress - becoming more profitable!</i>"
     
     return report
+
+def extract_price_from_text(text, price_type):
+    """Extract price from AI prediction text"""
+    if not text:
+        return None
+    
+    # Look for specific price patterns
+    patterns = {
+        "entry": [r'entry.*?\$?(\d+(?:,\d+)*(?:\.\d+)?)', r'buy.*?\$?(\d+(?:,\d+)*(?:\.\d+)?)'],
+        "target": [r'target.*?\$?(\d+(?:,\d+)*(?:\.\d+)?)', r'tp.*?\$?(\d+(?:,\d+)*(?:\.\d+)?)'],
+        "stop": [r'stop.*?\$?(\d+(?:,\d+)*(?:\.\d+)?)', r'sl.*?\$?(\d+(?:,\d+)*(?:\.\d+)?)']
+    }
+    
+    for pattern in patterns.get(price_type, []):
+        match = re.search(pattern, text.lower())
+        if match:
+            try:
+                return float(match.group(1).replace(',', ''))
+            except:
+                continue
+    return None
+
+def extract_direction_from_text(text):
+    """Extract direction from AI prediction text"""
+    if not text:
+        return "NEUTRAL"
+    
+    text_lower = text.lower()
+    if any(word in text_lower for word in ['buy', 'long', 'bullish', 'rally']):
+        return "BUY"
+    elif any(word in text_lower for word in ['sell', 'short', 'bearish', 'dip']):
+        return "SELL"
+    return "NEUTRAL"
+
+def extract_confluence_signals(prediction):
+    """Extract and analyze confluence signals used in prediction"""
+    signals = {
+        "technical_analysis": False,
+        "volume_analysis": False,
+        "support_resistance": False,
+        "rsi_momentum": False,
+        "macd_signal": False,
+        "funding_sentiment": False,
+        "fear_greed": False,
+        "divergence": False,
+        "breakout_pattern": False,
+        "trend_alignment": False
+    }
+    
+    try:
+        # Analyze professional analysis components
+        pro_analysis = prediction.get("predictions", {}).get("professional_analysis", {})
+        ai_prediction = prediction.get("predictions", {}).get("ai_prediction", "")
+        
+        if pro_analysis:
+            component_scores = pro_analysis.get("component_scores", {})
+            
+            # Map component scores to signals
+            for component, score in component_scores.items():
+                if score > 6.0:  # High confidence signal
+                    if "price_action" in component:
+                        signals["technical_analysis"] = True
+                    elif "volume" in component:
+                        signals["volume_analysis"] = True
+                    elif "momentum" in component:
+                        signals["rsi_momentum"] = True
+                    elif "funding" in component or "sentiment" in component:
+                        signals["funding_sentiment"] = True
+                    elif "volatility" in component:
+                        signals["breakout_pattern"] = True
+            
+            # Check strongest signal
+            strongest = pro_analysis.get("key_factors", {}).get("strongest_signal", ["", 0])
+            if strongest[1] > 7.0:
+                signal_type = strongest[0].lower()
+                if "technical" in signal_type:
+                    signals["technical_analysis"] = True
+                elif "volume" in signal_type:
+                    signals["volume_analysis"] = True
+                elif "support" in signal_type or "resistance" in signal_type:
+                    signals["support_resistance"] = True
+        
+        # Analyze AI prediction text for signals
+        if ai_prediction:
+            text_lower = ai_prediction.lower()
+            
+            if any(word in text_lower for word in ['rsi', 'momentum', 'oversold', 'overbought']):
+                signals["rsi_momentum"] = True
+            
+            if any(word in text_lower for word in ['macd', 'moving average', 'crossover']):
+                signals["macd_signal"] = True
+                
+            if any(word in text_lower for word in ['support', 'resistance', 'level']):
+                signals["support_resistance"] = True
+                
+            if any(word in text_lower for word in ['volume', 'accumulation', 'distribution']):
+                signals["volume_analysis"] = True
+                
+            if any(word in text_lower for word in ['funding', 'sentiment', 'fear', 'greed']):
+                signals["funding_sentiment"] = True
+                
+            if any(word in text_lower for word in ['divergence', 'hidden', 'regular']):
+                signals["divergence"] = True
+                
+            if any(word in text_lower for word in ['breakout', 'breakdown', 'pattern']):
+                signals["breakout_pattern"] = True
+                
+            if any(word in text_lower for word in ['trend', 'uptrend', 'downtrend', 'alignment']):
+                signals["trend_alignment"] = True
+        
+        # Check market data for implicit signals
+        market_data = prediction.get("market_data", {})
+        if market_data:
+            fear_greed = market_data.get("fear_greed", 50)
+            if isinstance(fear_greed, dict):
+                fear_greed = fear_greed.get("index", 50)
+            
+            if fear_greed < 25 or fear_greed > 75:
+                signals["fear_greed"] = True
+    
+    except Exception as e:
+        print(f"[WARN] Error extracting confluence signals: {e}")
+    
+    return signals
+
+def calculate_confluence_score(signals):
+    """Calculate confluence score based on signal strength"""
+    if not signals:
+        return 0
+    
+    # Weight different signals by importance
+    signal_weights = {
+        "technical_analysis": 2.0,
+        "volume_analysis": 1.5,
+        "support_resistance": 2.0,
+        "rsi_momentum": 1.0,
+        "macd_signal": 1.5,
+        "funding_sentiment": 1.0,
+        "fear_greed": 0.5,
+        "divergence": 2.0,
+        "breakout_pattern": 1.5,
+        "trend_alignment": 1.5
+    }
+    
+    total_score = 0
+    max_possible = sum(signal_weights.values())
+    
+    for signal, active in signals.items():
+        if active:
+            total_score += signal_weights.get(signal, 1.0)
+    
+    return (total_score / max_possible) * 10  # Scale to 0-10
+
+def identify_trade_mistakes(prediction, outcome, market_data, trade_metrics):
+    """Identify specific mistake patterns in trades"""
+    mistakes = []
+    
+    try:
+        rr_ratio = trade_metrics.get("rr_ratio", 0)
+        volatility = trade_metrics.get("volatility", "medium")
+        sentiment = trade_metrics.get("sentiment", "neutral")
+        confidence = trade_metrics.get("confidence", 60)
+        duration_hours = trade_metrics.get("duration_hours", 0)
+        
+        # Get prediction details
+        pro_analysis = prediction.get("predictions", {}).get("professional_analysis", {})
+        direction = pro_analysis.get("primary_scenario", "NEUTRAL") if pro_analysis else "NEUTRAL"
+        
+        # Mistake 1: Poor Risk-Reward Ratio
+        if rr_ratio < 1.5 and outcome == "SL_HIT":
+            mistakes.append("poor_rr_ratio")
+        
+        # Mistake 2: Ignored Sentiment (Counter-trend in wrong conditions)
+        if sentiment == "extreme_greed" and direction in ["BUY", "LONG", "BULLISH"] and outcome == "SL_HIT":
+            mistakes.append("ignored_greed_signal")
+        elif sentiment == "extreme_fear" and direction in ["SELL", "SHORT", "BEARISH"] and outcome == "SL_HIT":
+            mistakes.append("ignored_fear_signal")
+        
+        # Mistake 3: Wrong Volatility Assessment
+        if volatility == "low" and direction in ["SELL", "SHORT", "BEARISH"] and outcome == "SL_HIT":
+            mistakes.append("short_in_low_volatility")
+        elif volatility == "high" and rr_ratio < 2.0 and outcome == "SL_HIT":
+            mistakes.append("insufficient_rr_for_volatility")
+        
+        # Mistake 4: Overconfidence
+        if confidence > 80 and outcome == "SL_HIT":
+            mistakes.append("overconfident_loss")
+        
+        # Mistake 5: Rushed Entry (very quick hits)
+        if duration_hours < 1 and outcome == "SL_HIT":
+            mistakes.append("rushed_entry")
+        
+        # Mistake 6: Didn't Wait for Confirmation
+        rsi = market_data.get("btc_rsi", 50)
+        if direction in ["BUY", "LONG", "BULLISH"] and rsi > 75 and outcome == "SL_HIT":
+            mistakes.append("bought_overbought")
+        elif direction in ["SELL", "SHORT", "BEARISH"] and rsi < 25 and outcome == "SL_HIT":
+            mistakes.append("sold_oversold")
+        
+        # Mistake 7: Ignored Support/Resistance
+        entry_price = trade_metrics.get("entry_price", 0)
+        # This would need support/resistance data to implement fully
+        
+        # Mistake 8: Wrong Time Session
+        pred_hour = datetime.strptime(prediction["timestamp"], "%Y-%m-%d %H:%M:%S").hour
+        if pred_hour in [0, 1, 2, 23] and outcome == "SL_HIT":  # Dead hours
+            mistakes.append("bad_timing_session")
+        
+    except Exception as e:
+        print(f"[WARN] Error identifying trade mistakes: {e}")
+    
+    return mistakes
+
+def classify_time_session(hour):
+    """Classify trading session based on hour"""
+    if 0 <= hour < 6:
+        return "asia_night"
+    elif 6 <= hour < 12:
+        return "asia_day"
+    elif 12 <= hour < 18:
+        return "europe"
+    else:
+        return "us_evening"
 
 if __name__ == "__main__":
     # Check for test mode argument

@@ -2,6 +2,20 @@
 .env
 .env.*
 
+# Data files - runtime generated, should not be tracked
+detailed_predictions.json
+test_detailed_predictions.json
+prediction_history.json
+deep_learning_insights.json
+crypto_data_history.csv
+crypto_predictions.db
+*.db
+
+# ML Models and learning data
+models/
+*.pkl
+*.joblib
+
 # Test files
 test_*.csv
 test_*.json

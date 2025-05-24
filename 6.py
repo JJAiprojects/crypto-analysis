@@ -23,6 +23,14 @@ try:
 except ImportError:
     DOTENV_AVAILABLE = False
 
+# Import database manager
+try:
+    from database_manager import db_manager
+    DATABASE_AVAILABLE = True
+except ImportError:
+    print("[WARN] Database manager not available, using JSON files only")
+    DATABASE_AVAILABLE = False
+
 # ----------------------------
 # 1. Config
 # ----------------------------
@@ -1369,25 +1377,37 @@ def save_detailed_prediction(prediction_data, market_data):
         "final_accuracy": None
     }
     
-    # Load existing predictions
-    predictions = []
-    if os.path.exists(prediction_file):
+    # Try to save to database first, fallback to JSON
+    success = False
+    if DATABASE_AVAILABLE:
         try:
-            with open(prediction_file, "r") as f:
-                predictions = json.load(f)
+            success = db_manager.save_prediction(prediction_record)
+            if success:
+                print(f"[INFO] Detailed prediction saved to database for {today} ({session})")
         except Exception as e:
-            print(f"[ERROR] Loading detailed prediction history: {e}")
+            print(f"[ERROR] Database save failed: {e}")
     
-    # Add new prediction
-    predictions.append(prediction_record)
-    
-    # Save predictions
-    try:
-        with open(prediction_file, "w") as f:
-            json.dump(predictions, f, indent=4)
-        print(f"[INFO] Detailed prediction saved to {prediction_file} for {today} ({session})")
-    except Exception as e:
-        print(f"[ERROR] Saving detailed prediction: {e}")
+    # Fallback to JSON file if database failed or not available
+    if not success:
+        # Load existing predictions
+        predictions = []
+        if os.path.exists(prediction_file):
+            try:
+                with open(prediction_file, "r") as f:
+                    predictions = json.load(f)
+            except Exception as e:
+                print(f"[ERROR] Loading detailed prediction history: {e}")
+        
+        # Add new prediction
+        predictions.append(prediction_record)
+        
+        # Save predictions
+        try:
+            with open(prediction_file, "w") as f:
+                json.dump(predictions, f, indent=4)
+            print(f"[INFO] Detailed prediction saved to {prediction_file} for {today} ({session})")
+        except Exception as e:
+            print(f"[ERROR] Saving detailed prediction: {e}")
 
 def get_prediction_accuracy():
     """Compare previous predictions with actual outcomes"""
