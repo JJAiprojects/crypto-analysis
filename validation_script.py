@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 import time
 import os
 import re
+import sys
 from ml_enhancer import PredictionEnhancer
 from risk_manager import RiskManager
 from professional_analysis import ProfessionalTraderAnalysis
@@ -52,16 +53,15 @@ def load_telegram_config():
 
 def send_telegram_message(message, is_test=False):
     """Send a message to Telegram with proper bot selection"""
-    config = load_config()
+    # Load telegram config directly instead of general config
+    telegram_config = load_telegram_config()
     
-    # Select appropriate bot token and chat ID
-    if is_test and config["test_mode"]["enabled"]:
-        bot_token = config["telegram"]["test"]["bot_token"]
-        chat_id = config["telegram"]["test"]["chat_id"]
-        print("[TEST] Using test Telegram bot")
-    else:
-        bot_token = config["telegram"]["bot_token"]
-        chat_id = config["telegram"]["chat_id"]
+    if not telegram_config["enabled"]:
+        print("[WARN] Telegram not configured - skipping message")
+        return False
+    
+    bot_token = telegram_config["bot_token"]
+    chat_id = telegram_config["chat_id"]
     
     if not bot_token or not chat_id:
         print("[WARN] Telegram credentials not configured")
@@ -414,24 +414,32 @@ def validate_predictions():
         except Exception as e:
             print(f"[ERROR] ML training failed: {e}")
     
-    # Send notifications for latest prediction
-    if notifications:
-        print(f"[INFO] Sending {len(notifications)} validation notifications")
-        for notification in notifications[-3:]:  # Limit to last 3 notifications
-            message = format_notification_message(notification)
-            send_telegram_message(message, is_test=config["test_mode"]["enabled"])
+    # NO LONGER SENDING ENTRY LEVEL HIT NOTIFICATIONS - per user request
+    # The old code that sent notifications for latest prediction has been removed
     
-    # Check if it's time for accuracy report (7:45 PM and 7:45 AM)
+    # Check for scheduled reports based on actual cron timing
     current_hour = datetime.now().hour
     current_minute = datetime.now().minute
+    current_weekday = datetime.now().weekday()  # 6 = Sunday
+    current_day = datetime.now().day
     
-    # Send accuracy report at 7:45 PM (19:45) for 8 AM predictions
-    # Send accuracy report at 7:45 AM (07:45) for 8 PM predictions from previous day
-    if (current_hour == 19 and 45 <= current_minute <= 59) or (current_hour == 7 and 45 <= current_minute <= 59):
-        if current_hour == 19:
-            report_type = "8 AM predictions"
-        else:
+    # Since cron runs every 30 minutes (:00 and :30), we need to check for the closest times
+    # to 7:45 AM and 7:45 PM which are 8:00 AM and 8:00 PM, or 7:30 AM/PM
+    
+    # Send accuracy report at 8:00 AM/7:30 AM (for 8 PM predictions from previous day)
+    # Send accuracy report at 8:00 PM/7:30 PM (for 8 AM predictions from same day)
+    should_send_accuracy_report = (
+        (current_hour == 8 and current_minute == 0) or  # 8:00 AM
+        (current_hour == 7 and current_minute == 30) or  # 7:30 AM  
+        (current_hour == 20 and current_minute == 0) or  # 8:00 PM
+        (current_hour == 19 and current_minute == 30)    # 7:30 PM
+    )
+    
+    if should_send_accuracy_report:
+        if current_hour in [7, 8]:
             report_type = "8 PM predictions (previous day)"
+        else:
+            report_type = "8 AM predictions (same day)"
         
         print(f"[INFO] Generating daily accuracy report for {report_type}")
         accuracy_metrics = calculate_enhanced_accuracy(predictions)
@@ -442,9 +450,13 @@ def validate_predictions():
         improvement_data = generate_improvement_suggestions(accuracy_metrics, predictions)
         save_improvement_data(improvement_data)
     
-    # Weekly Deep Learning Analysis - Every Sunday at 8 PM
-    current_weekday = datetime.now().weekday()  # 6 = Sunday
-    if current_weekday == 6 and current_hour == 20 and 0 <= current_minute <= 15:
+    # Weekly Deep Learning Analysis - Every Sunday at 8:00 PM or 7:30 PM (closest to 7:45 PM)
+    should_send_weekly_report = (
+        current_weekday == 6 and 
+        ((current_hour == 20 and current_minute == 0) or (current_hour == 19 and current_minute == 30))
+    )
+    
+    if should_send_weekly_report:
         print("[INFO] Generating weekly deep learning analysis...")
         weekly_insights = generate_deep_learning_insights(predictions, "weekly")
         save_deep_learning_insights(weekly_insights)
@@ -454,9 +466,13 @@ def validate_predictions():
         send_telegram_message(weekly_report, is_test=config["test_mode"]["enabled"])
         print("[INFO] Weekly deep learning analysis completed")
     
-    # Monthly Deep Learning Analysis - Every 1st of month at 8 PM
-    current_day = datetime.now().day
-    if current_day == 1 and current_hour == 20 and 0 <= current_minute <= 15:
+    # Monthly Deep Learning Analysis - Every 1st of month at 8:00 PM or 7:30 PM (closest to 7:45 PM)
+    should_send_monthly_report = (
+        current_day == 1 and 
+        ((current_hour == 20 and current_minute == 0) or (current_hour == 19 and current_minute == 30))
+    )
+    
+    if should_send_monthly_report:
         print("[INFO] Generating monthly deep learning analysis...")
         monthly_insights = generate_deep_learning_insights(predictions, "monthly")
         save_deep_learning_insights(monthly_insights)
@@ -472,6 +488,16 @@ def validate_predictions():
             print("[INFO] ML models updated with monthly insights")
         except Exception as e:
             print(f"[ERROR] Failed to update ML models with insights: {e}")
+    
+    # FOR TESTING: Force send a test accuracy report now if requested
+    if len(sys.argv) > 1 and sys.argv[1] == "--test-timing":
+        print("[TEST] Force sending accuracy report for testing...")
+        accuracy_metrics = calculate_enhanced_accuracy(predictions)
+        accuracy_message = format_accuracy_summary(accuracy_metrics)
+        if send_telegram_message(accuracy_message, is_test=config["test_mode"]["enabled"]):
+            print("[TEST] Test accuracy report sent successfully!")
+        else:
+            print("[TEST] Failed to send test accuracy report")
     
     print("[INFO] Enhanced prediction validation completed successfully")
 
@@ -495,16 +521,7 @@ def validate_professional_targets(prediction, coin, targets, current_price, is_l
         
         if not is_duplicate_validation_point(prediction.get("validation_points", []), validation_point):
             prediction.setdefault("validation_points", []).append(validation_point)
-            
-            if is_latest:
-                notifications.append({
-                    "type": "professional_target",
-                    "coin": coin,
-                    "target_level": targets["target_1"],
-                    "current_price": current_price,
-                    "scenario": scenario,
-                    "target_number": 1
-                })
+            # NO LONGER ADDING ENTRY LEVEL HIT NOTIFICATIONS - per user request
     
     # Check target 2
     if targets.get("target_2") and validate_target_hit(current_price, targets["target_2"], "TARGET_2", scenario):
@@ -519,16 +536,7 @@ def validate_professional_targets(prediction, coin, targets, current_price, is_l
         
         if not is_duplicate_validation_point(prediction.get("validation_points", []), validation_point):
             prediction.setdefault("validation_points", []).append(validation_point)
-            
-            if is_latest:
-                notifications.append({
-                    "type": "professional_target",
-                    "coin": coin,
-                    "target_level": targets["target_2"],
-                    "current_price": current_price,
-                    "scenario": scenario,
-                    "target_number": 2
-                })
+            # NO LONGER ADDING ENTRY LEVEL HIT NOTIFICATIONS - per user request
     
     # Check stop loss
     if targets.get("stop_loss") and validate_target_hit(current_price, targets["stop_loss"], "STOP_LOSS", scenario):
@@ -543,15 +551,7 @@ def validate_professional_targets(prediction, coin, targets, current_price, is_l
         
         if not is_duplicate_validation_point(prediction.get("validation_points", []), validation_point):
             prediction.setdefault("validation_points", []).append(validation_point)
-            
-            if is_latest:
-                notifications.append({
-                    "type": "professional_stop_loss",
-                    "coin": coin,
-                    "stop_level": targets["stop_loss"],
-                    "current_price": current_price,
-                    "scenario": scenario
-                })
+            # NO LONGER ADDING ENTRY LEVEL HIT NOTIFICATIONS - per user request
 
 def validate_legacy_targets(prediction, coin, targets, current_price, is_latest, notifications):
     """Validate legacy AI prediction format targets"""
@@ -596,7 +596,23 @@ def calculate_enhanced_accuracy(predictions):
         "signal_combination_performance": {}
     }
     
-    recent_predictions = [p for p in predictions if datetime.strptime(p["timestamp"], "%Y-%m-%d %H:%M:%S") > datetime.now() - timedelta(days=30)]
+    recent_predictions = []
+    for p in predictions:
+        timestamp_str = p["timestamp"]
+        try:
+            # Handle both timestamp formats (ISO and space-separated)
+            if 'T' in timestamp_str:
+                # ISO format from database: '2025-05-24T17:22:27'
+                pred_timestamp = datetime.fromisoformat(timestamp_str.replace('Z', ''))
+            else:
+                # Space format from JSON: '2025-05-24 17:22:27'
+                pred_timestamp = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
+            
+            if pred_timestamp > datetime.now() - timedelta(days=30):
+                recent_predictions.append(p)
+        except Exception as e:
+            print(f"[WARN] Error parsing timestamp {timestamp_str}: {e}")
+            continue
     
     if not recent_predictions:
         return metrics
@@ -894,7 +910,19 @@ def extract_trade_metrics(prediction):
         hit_timestamp = None
         
         for vp in validation_points:
-            vp_time = datetime.strptime(vp["timestamp"], "%Y-%m-%d %H:%M:%S")
+            try:
+                # Handle both timestamp formats (ISO and space-separated)
+                timestamp_str = vp["timestamp"]
+                if 'T' in timestamp_str:
+                    # ISO format from database: '2025-05-24T17:22:27'
+                    vp_time = datetime.fromisoformat(timestamp_str.replace('Z', ''))
+                else:
+                    # Space format from JSON: '2025-05-24 17:22:27'
+                    vp_time = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
+            except Exception as e:
+                print(f"[WARN] Error parsing validation point timestamp {timestamp_str}: {e}")
+                continue
+                
             if vp["type"] in ["PROFESSIONAL_TARGET_1", "PROFESSIONAL_TARGET_2"]:
                 outcome = "TP_HIT"
                 actual_exit_price = vp["actual_price"]
@@ -908,14 +936,34 @@ def extract_trade_metrics(prediction):
 
         # Calculate duration if trade completed
         if hit_timestamp:
-            pred_time = datetime.strptime(prediction["timestamp"], "%Y-%m-%d %H:%M:%S")
-            duration_hours = (hit_timestamp - pred_time).total_seconds() / 3600
+            try:
+                # Handle both timestamp formats for prediction timestamp
+                pred_timestamp_str = prediction["timestamp"]
+                if 'T' in pred_timestamp_str:
+                    # ISO format from database: '2025-05-24T17:22:27'
+                    pred_time = datetime.fromisoformat(pred_timestamp_str.replace('Z', ''))
+                else:
+                    # Space format from JSON: '2025-05-24 17:22:27'
+                    pred_time = datetime.strptime(pred_timestamp_str, "%Y-%m-%d %H:%M:%S")
+                duration_hours = (hit_timestamp - pred_time).total_seconds() / 3600
+            except Exception as e:
+                print(f"[WARN] Error parsing prediction timestamp {pred_timestamp_str}: {e}")
+                duration_hours = 0
 
         if outcome == "PENDING" and duration_hours == 0:
             # Check if trade should be marked as breakeven or partial
             current_time = datetime.now()
-            pred_time = datetime.strptime(prediction["timestamp"], "%Y-%m-%d %H:%M:%S")
-            hours_since = (current_time - pred_time).total_seconds() / 3600
+            try:
+                # Handle both timestamp formats for prediction timestamp
+                pred_timestamp_str = prediction["timestamp"]
+                if 'T' in pred_timestamp_str:
+                    pred_time = datetime.fromisoformat(pred_timestamp_str.replace('Z', ''))
+                else:
+                    pred_time = datetime.strptime(pred_timestamp_str, "%Y-%m-%d %H:%M:%S")
+                hours_since = (current_time - pred_time).total_seconds() / 3600
+            except Exception as e:
+                print(f"[WARN] Error parsing prediction timestamp for breakeven check: {e}")
+                hours_since = 0
             
             if hours_since > 24:  # After 24 hours, evaluate as breakeven if no hits
                 outcome = "BREAKEVEN"
@@ -947,12 +995,22 @@ def extract_trade_metrics(prediction):
         rr_ratio = potential_reward / risk if risk > 0 else 0
 
         # Calculate actual price movement over 12h
-        pred_time = datetime.strptime(prediction["timestamp"], "%Y-%m-%d %H:%M:%S")
-        twelve_hour_mark = pred_time + timedelta(hours=12)
+        try:
+            # Handle both timestamp formats for prediction timestamp
+            pred_timestamp_str = prediction["timestamp"]
+            if 'T' in pred_timestamp_str:
+                pred_time = datetime.fromisoformat(pred_timestamp_str.replace('Z', ''))
+            else:
+                pred_time = datetime.strptime(pred_timestamp_str, "%Y-%m-%d %H:%M:%S")
+            twelve_hour_mark = pred_time + timedelta(hours=12)
+        except Exception as e:
+            print(f"[WARN] Error parsing prediction timestamp for 12h calculation: {e}")
+            pred_time = datetime.now()
+            twelve_hour_mark = pred_time + timedelta(hours=12)
         
         # Try to find the 12h price from validation points or current price
-        twelve_hour_price = market_data.get("btc_price", entry_price)
-        actual_move_12h = abs(twelve_hour_price - entry_price) / entry_price if entry_price else 0
+        twelve_hour_price = market_data.get("btc_price", entry_price) or entry_price or 0
+        actual_move_12h = abs(twelve_hour_price - entry_price) / entry_price if entry_price and twelve_hour_price else 0
 
         # Extract market conditions - ENHANCED
         btc_rsi = market_data.get("btc_rsi", 50) or 50
@@ -1020,7 +1078,18 @@ def extract_trade_metrics(prediction):
         })
 
         # Time analysis
-        pred_hour = datetime.strptime(prediction["timestamp"], "%Y-%m-%d %H:%M:%S").hour
+        try:
+            # Handle both timestamp formats for prediction timestamp
+            pred_timestamp_str = prediction["timestamp"]
+            if 'T' in pred_timestamp_str:
+                pred_time = datetime.fromisoformat(pred_timestamp_str.replace('Z', ''))
+            else:
+                pred_time = datetime.strptime(pred_timestamp_str, "%Y-%m-%d %H:%M:%S")
+            pred_hour = pred_time.hour
+        except Exception as e:
+            print(f"[WARN] Error parsing prediction timestamp for hour extraction: {e}")
+            pred_hour = 12  # Default to noon
+        
         time_session = classify_time_session(pred_hour)
 
         return {
@@ -2048,7 +2117,18 @@ def identify_trade_mistakes(prediction, outcome, market_data, trade_metrics):
         # This would need support/resistance data to implement fully
         
         # Mistake 8: Wrong Time Session
-        pred_hour = datetime.strptime(prediction["timestamp"], "%Y-%m-%d %H:%M:%S").hour
+        try:
+            # Handle both timestamp formats for prediction timestamp
+            pred_timestamp_str = prediction["timestamp"]
+            if 'T' in pred_timestamp_str:
+                pred_time = datetime.fromisoformat(pred_timestamp_str.replace('Z', ''))
+            else:
+                pred_time = datetime.strptime(pred_timestamp_str, "%Y-%m-%d %H:%M:%S")
+            pred_hour = pred_time.hour
+        except Exception as e:
+            print(f"[WARN] Error parsing prediction timestamp for mistake analysis: {e}")
+            pred_hour = 12  # Default to noon
+            
         if pred_hour in [0, 1, 2, 23] and outcome == "SL_HIT":  # Dead hours
             mistakes.append("bad_timing_session")
         
