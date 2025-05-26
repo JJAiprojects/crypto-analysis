@@ -15,7 +15,8 @@ from dotenv import load_dotenv
 
 # Import database manager
 try:
-    from database_manager import db_manager
+    from database_manager import DatabaseManager
+    db_manager = DatabaseManager()
     DATABASE_AVAILABLE = True
     print("[INFO] Database manager loaded successfully")
 except ImportError:
@@ -254,1411 +255,297 @@ def load_config():
     return default_config
 
 def validate_predictions():
-    """Enhanced validation with ML learning and professional analysis integration"""
-    # Log times in different timezones
-    server_time = datetime.now()
-    utc_time = datetime.now(timezone.utc)
-    print(f"[INFO] UTC time: {utc_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"[INFO] Server time: {server_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"[INFO] Expected Vietnam time: {(utc_time + timedelta(hours=7)).strftime('%Y-%m-%d %H:%M:%S')}")
-    
-
-    # Load config
-    config = load_config()
-    
-    if config["test_mode"]["enabled"]:
-        print("[TEST] Running validation in test mode")
-    
-    # Use test file if in test mode
-    prediction_file = "detailed_predictions.json"
-    if config["test_mode"]["enabled"]:
-        prediction_file = config["test_mode"]["output_prefix"] + prediction_file
-        print(f"[TEST] Using test prediction file: {prediction_file}")
-    
-    # Load predictions from database or JSON file
-    predictions = []
-    if DATABASE_AVAILABLE:
-        try:
+    """Validate the last prediction and generate accuracy report"""
+    try:
+        # Load predictions
+        if DATABASE_AVAILABLE:
             predictions = db_manager.load_predictions()
-            if predictions:
-                print(f"[INFO] Loaded {len(predictions)} predictions from database")
-            else:
-                print("[INFO] No predictions found in database")
-        except Exception as e:
-            print(f"[ERROR] Failed to load predictions from database: {e}")
-            # Fall back to JSON file
-    
-    # Fallback to JSON file if database failed or not available
-    if not predictions:
-        if not os.path.exists(prediction_file):
-            print("[INFO] No predictions to validate yet")
-            return
-        
-        try:
-            with open(prediction_file, "r") as f:
-                predictions = json.load(f)
-                print(f"[INFO] Loaded {len(predictions)} predictions from JSON file")
-        except Exception as e:
-            print(f"[ERROR] Failed to load predictions from JSON: {e}")
-            return
-    
-    if not predictions:
-        print("[INFO] No predictions to validate")
-        return
-    
-    # Initialize components
-    ml_enhancer = PredictionEnhancer()
-    risk_manager = RiskManager()
-    professional_trader = ProfessionalTraderAnalysis()
-    
-    # Get current prices
-    prices = get_crypto_prices()
-    
-    # Track notifications and improvements
-    notifications = []
-    ml_training_data = []
-    
-    # Get the latest prediction for detailed tracking
-    latest_prediction = predictions[-1] if predictions else None
-    
-    # Process all unvalidated predictions
-    for pred in predictions:
-        # Handle both timestamp formats (ISO and space-separated)
-        timestamp_str = pred["timestamp"]
-        if 'T' in timestamp_str:
-            # ISO format from database: '2025-05-24T10:12:01'
-            pred_timestamp = datetime.fromisoformat(timestamp_str.replace('Z', ''))
         else:
-            # Space format from JSON: '2025-05-24 10:12:01'
-            pred_timestamp = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
-        
-        # Skip very recent predictions (less than 1 hour old)
-        if (datetime.now() - pred_timestamp).total_seconds() < 3600:
-            continue
-        
-        # Initialize validation points if not exists
-        if "validation_points" not in pred:
-            pred["validation_points"] = []
-        
-        # Extract professional analysis predictions
-        ai_pred = pred.get("predictions", {}).get("ai_prediction", "")
-        pro_analysis = pred.get("predictions", {}).get("professional_analysis", {})
-        ml_pred = pred.get("predictions", {}).get("ml_predictions", {})
-        
-        # Enhanced target extraction for professional format
-        if pro_analysis and "price_targets" in pro_analysis:
-            btc_targets = {
-                "current": pro_analysis["price_targets"].get("current"),
-                "target_1": pro_analysis["price_targets"].get("target_1"),
-                "target_2": pro_analysis["price_targets"].get("target_2"),
-                "stop_loss": pro_analysis["price_targets"].get("stop_loss"),
-                "scenario": pro_analysis.get("primary_scenario", "NEUTRAL")
-            }
-            
-            # Validate BTC targets
-            validate_professional_targets(pred, "BTC", btc_targets, prices["btc"], latest_prediction == pred, notifications)
-        
-        # Also validate any AI predictions (fallback/additional)
-        targets = extract_professional_targets(ai_pred)
-        for coin in ["BTC", "ETH"]:
-            if targets[coin]:
-                price = prices[coin.lower()]
-                validate_legacy_targets(pred, coin, targets[coin], price, latest_prediction == pred, notifications)
-        
-        # Collect ML training data
-        if not pred.get("ml_processed", False):
-            training_point = {
-                "prediction_data": pred,
-                "actual_btc_price": prices["btc"],
-                "actual_eth_price": prices["eth"],
-                "validation_points": pred["validation_points"],
-                "timestamp": datetime.now().isoformat()
-            }
-            ml_training_data.append(training_point)
-            pred["ml_processed"] = True
-        
-        # Mark as validated
-        if not pred.get("hourly_validated"):
-            pred["hourly_validated"] = True
-            pred["last_validation"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
-    # Save updated predictions (database or JSON)
-    if DATABASE_AVAILABLE:
+            try:
+                with open("detailed_predictions.json", "r") as f:
+                    predictions = json.load(f)
+            except Exception as e:
+                print(f"[ERROR] Failed to load predictions: {e}")
+                return
+
+        if not predictions:
+            print("[WARN] No predictions found to validate")
+            return
+
+        # Get current prices
         try:
-            # Update predictions in database
-            for pred in predictions:
-                if pred.get("hourly_validated") and pred.get("validation_points"):
-                    db_manager.update_prediction_validation(
-                        pred["timestamp"], 
-                        pred["validation_points"], 
-                        pred.get("final_accuracy")
-                    )
-            print("[INFO] Updated predictions in database")
+            current_prices = get_crypto_prices()
         except Exception as e:
-            print(f"[ERROR] Failed to update database: {e}")
-    else:
-        # Save to JSON file
-        try:
-            with open(prediction_file, "w") as f:
-                json.dump(predictions, f, indent=4)
-            print("[INFO] Updated predictions in JSON file")
-        except Exception as e:
-            print(f"[ERROR] Failed to save predictions to JSON: {e}")
-    
-    # Train ML models with new data
-    if ml_training_data:
-        print(f"[INFO] Training ML models with {len(ml_training_data)} new data points")
-        try:
-            ml_enhancer.incremental_learning(ml_training_data)
-            print("[INFO] ML incremental learning completed")
-        except Exception as e:
-            print(f"[ERROR] ML training failed: {e}")
-    
-    # NO LONGER SENDING ENTRY LEVEL HIT NOTIFICATIONS - per user request
-    # The old code that sent notifications for latest prediction has been removed
-    
-    # Check for scheduled reports based on actual cron timing (UTC timezone)
-    # Vietnam time is UTC+7, so:
-    # 8am Vietnam = 1am UTC
-    # 8pm Vietnam = 1pm UTC (13:00)
-    current_hour = datetime.now().hour
-    current_minute = datetime.now().minute
-    current_weekday = datetime.now().weekday()  # 6 = Sunday
-    current_day = datetime.now().day
-    
-    # Send accuracy report at correct Vietnam times:
-    # 1:00 AM UTC = 8:00 AM Vietnam (analyze 8pm prediction from previous day)
-    # 13:00 PM UTC = 8:00 PM Vietnam (analyze 8am prediction from same day)
-    should_send_accuracy_report = (
-        (current_hour == 1 and current_minute == 0) or   # 8:00 AM Vietnam time
-        (current_hour == 13 and current_minute == 0)     # 8:00 PM Vietnam time
-    )
-    
-    if should_send_accuracy_report:
-        if current_hour == 1:
-            report_type = "8 PM predictions (previous day)"
-            vietnam_time = "8:00 AM"
-        else:
-            report_type = "8 AM predictions (same day)" 
-            vietnam_time = "8:00 PM"
+            print(f"[ERROR] Failed to get current prices: {e}")
+            return
+
+        # Get current hour in Vietnam time
+        current_hour = (datetime.now().hour + 7) % 24  # Convert UTC to Vietnam time
         
-        print(f"[INFO] Generating daily accuracy report for {report_type} at {vietnam_time} Vietnam time")
-        
-        # Get the most recent prediction for detailed analysis
+        # Analyze the last prediction cycle
         last_prediction_analysis = analyze_last_prediction_cycle(predictions, current_hour)
         
+        # Calculate overall accuracy metrics
         accuracy_metrics = calculate_enhanced_accuracy(predictions)
-        accuracy_message = format_accuracy_summary(accuracy_metrics, last_prediction_analysis)
-        send_telegram_message(accuracy_message, is_test=config["test_mode"]["enabled"])
         
-        # Also send improvement suggestions to AI
-        improvement_data = generate_improvement_suggestions(accuracy_metrics, predictions)
-        save_improvement_data(improvement_data)
-    
-    # Weekly Deep Learning Analysis - Every Sunday at 8:00 PM Vietnam time (13:00 UTC)
-    should_send_weekly_report = (
-        current_weekday == 6 and 
-        current_hour == 13 and current_minute == 0
-    )
-    
-    if should_send_weekly_report:
-        print("[INFO] Generating weekly deep learning analysis...")
-        weekly_insights = generate_deep_learning_insights(predictions, "weekly")
-        save_deep_learning_insights(weekly_insights)
+        # Format and send the accuracy report
+        report = format_accuracy_summary(accuracy_metrics, last_prediction_analysis)
+        send_telegram_message(report)
         
-        # Send comprehensive weekly report
-        weekly_report = format_deep_insights_summary(weekly_insights)
-        send_telegram_message(weekly_report, is_test=config["test_mode"]["enabled"])
-        print("[INFO] Weekly deep learning analysis completed")
-    
-    # Monthly Deep Learning Analysis - Every 1st of month at 8:00 PM Vietnam time (13:00 UTC)
-    should_send_monthly_report = (
-        current_day == 1 and 
-        current_hour == 13 and current_minute == 0
-    )
-    
-    if should_send_monthly_report:
-        print("[INFO] Generating monthly deep learning analysis...")
-        monthly_insights = generate_deep_learning_insights(predictions, "monthly")
-        save_deep_learning_insights(monthly_insights)
-        
-        # Send comprehensive monthly report
-        monthly_report = format_deep_insights_summary(monthly_insights)
-        send_telegram_message(monthly_report, is_test=config["test_mode"]["enabled"])
-        print("[INFO] Monthly deep learning analysis completed")
-        
-        # Also trigger ML model retraining with insights
-        try:
-            ml_enhancer.learn_from_insights(monthly_insights)
-            print("[INFO] ML models updated with monthly insights")
-        except Exception as e:
-            print(f"[ERROR] Failed to update ML models with insights: {e}")
-    
-    # FOR TESTING: Force send a test accuracy report now if requested
-    if len(sys.argv) > 1 and sys.argv[1] == "--test-timing":
-        print("[TEST] Force sending accuracy report for testing...")
-        accuracy_metrics = calculate_enhanced_accuracy(predictions)
-        accuracy_message = format_accuracy_summary(accuracy_metrics)
-        if send_telegram_message(accuracy_message, is_test=config["test_mode"]["enabled"]):
-            print("[TEST] Test accuracy report sent successfully!")
+        # Save predictions for learning
+        if DATABASE_AVAILABLE:
+            for prediction in predictions:
+                if not prediction.get("ml_processed"):
+                    db_manager.save_prediction(prediction)
+                    prediction["ml_processed"] = True
         else:
-            print("[TEST] Failed to send test accuracy report")
-    
-    print("[INFO] Enhanced prediction validation completed successfully")
+            with open("detailed_predictions.json", "w") as f:
+                json.dump(predictions, f, indent=4, default=str)
+
+    except Exception as e:
+        print(f"[ERROR] Validation failed: {e}")
+        return
 
 def validate_professional_targets(prediction, coin, targets, current_price, is_latest, notifications):
-    """Validate professional analysis targets"""
-    if not targets or not current_price:
-        return
-    
-    scenario = targets.get("scenario", "NEUTRAL")
-    
-    # Check target 1
-    if targets.get("target_1") and validate_target_hit(current_price, targets["target_1"], "TARGET_1", scenario):
-        validation_point = {
-            "coin": coin,
-            "type": "PROFESSIONAL_TARGET_1",
-            "predicted_level": targets["target_1"],
-            "actual_price": current_price,
-            "scenario": scenario,
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        }
-        
-        if not is_duplicate_validation_point(prediction.get("validation_points", []), validation_point):
-            prediction.setdefault("validation_points", []).append(validation_point)
-            # NO LONGER ADDING ENTRY LEVEL HIT NOTIFICATIONS - per user request
-    
-    # Check target 2
-    if targets.get("target_2") and validate_target_hit(current_price, targets["target_2"], "TARGET_2", scenario):
-        validation_point = {
-            "coin": coin,
-            "type": "PROFESSIONAL_TARGET_2", 
-            "predicted_level": targets["target_2"],
-            "actual_price": current_price,
-            "scenario": scenario,
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        }
-        
-        if not is_duplicate_validation_point(prediction.get("validation_points", []), validation_point):
-            prediction.setdefault("validation_points", []).append(validation_point)
-            # NO LONGER ADDING ENTRY LEVEL HIT NOTIFICATIONS - per user request
-    
-    # Check stop loss
-    if targets.get("stop_loss") and validate_target_hit(current_price, targets["stop_loss"], "STOP_LOSS", scenario):
-        validation_point = {
-            "coin": coin,
-            "type": "PROFESSIONAL_STOP_LOSS",
-            "predicted_level": targets["stop_loss"],
-            "actual_price": current_price,
-            "scenario": scenario,
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        }
-        
-        if not is_duplicate_validation_point(prediction.get("validation_points", []), validation_point):
-            prediction.setdefault("validation_points", []).append(validation_point)
-            # NO LONGER ADDING ENTRY LEVEL HIT NOTIFICATIONS - per user request
+    """Validate professional trading targets"""
+    try:
+        for target in targets:
+            target_price = target.get("price")
+            target_type = target.get("type")
+            
+            if not target_price or not target_type:
+                continue
+
+            # Validate target hit
+            hit, hit_type = validate_target_hit(current_price, target_price, target_type)
+            
+            if hit:
+                # Create validation point
+                validation_point = {
+                    "coin": coin,
+                    "type": target_type,
+                    "predicted_level": target_price,
+                    "current_price": current_price,
+                    "hit": True,
+                    "hit_type": hit_type,
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+
+                # Add to validation points if not duplicate
+                if not is_duplicate_validation_point(prediction.get("validation_points", []), validation_point):
+                    prediction.setdefault("validation_points", []).append(validation_point)
+                    
+                    # Add notification
+                    notifications.append({
+                        "type": "target_hit",
+                        "coin": coin,
+                        "target_type": target_type,
+                        "predicted_price": target_price,
+                        "current_price": current_price,
+                        "hit_type": hit_type
+                    })
+
+    except Exception as e:
+        print(f"[ERROR] Failed to validate professional targets: {e}")
 
 def validate_legacy_targets(prediction, coin, targets, current_price, is_latest, notifications):
-    """Validate legacy AI prediction format targets"""
-    # Implementation for backward compatibility with older prediction formats
-    pass
+    """Validate legacy trading targets"""
+    try:
+        for target in targets:
+            target_price = target.get("price")
+            target_type = target.get("type")
+            
+            if not target_price or not target_type:
+                continue
+
+            # Validate target hit
+            hit, hit_type = validate_target_hit(current_price, target_price, target_type)
+            
+            if hit:
+                # Create validation point
+                validation_point = {
+                    "coin": coin,
+                    "type": target_type,
+                    "predicted_level": target_price,
+                    "current_price": current_price,
+                    "hit": True,
+                    "hit_type": hit_type,
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+
+                # Add to validation points if not duplicate
+                if not is_duplicate_validation_point(prediction.get("validation_points", []), validation_point):
+                    prediction.setdefault("validation_points", []).append(validation_point)
+                    
+                    # Add notification
+                    notifications.append({
+                        "type": "target_hit",
+                        "coin": coin,
+                        "target_type": target_type,
+                        "predicted_price": target_price,
+                        "current_price": current_price,
+                        "hit_type": hit_type
+                    })
+
+    except Exception as e:
+        print(f"[ERROR] Failed to validate legacy targets: {e}")
 
 def calculate_enhanced_accuracy(predictions):
-    """Calculate enhanced accuracy metrics with detailed insights for faster learning"""
-    metrics = {
-        "total_predictions": len(predictions),
-        "validated_predictions": 0,
-        
-        # Core Performance Metrics
-        "win_rate_overall": 0,
-        "win_rate_long": 0,
-        "win_rate_short": 0,
-        "r_expectancy": 0,
-        "average_rr_ratio": 0,
-        "profit_factor": 0,
-        
-        # Detailed Analysis - NEW ENHANCED SECTIONS
-        "best_setup_analysis": {},
-        "best_time_analysis": {},
-        "worst_mistakes_analysis": {},
-        "confluence_performance": {},
-        
-        # Volatility & Sentiment Analysis
-        "volatility_performance": {},
-        "sentiment_performance": {},
-        
-        # Specific Insights Discovery
-        "key_insights": [],
-        "actionable_recommendations": [],
-        
-        # Performance by Market Conditions
-        "market_edge_analysis": {},
-        
-        # Mistake Patterns
-        "recurring_mistakes": {},
-        
-        # Setup Confluence Analysis
-        "signal_combination_performance": {}
-    }
-    
-    recent_predictions = []
-    for p in predictions:
-        timestamp_str = p["timestamp"]
-        try:
-            # Handle both timestamp formats (ISO and space-separated)
-            if 'T' in timestamp_str:
-                # ISO format from database: '2025-05-24T17:22:27'
-                pred_timestamp = datetime.fromisoformat(timestamp_str.replace('Z', ''))
-            else:
-                # Space format from JSON: '2025-05-24 17:22:27'
-                pred_timestamp = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
-            
-            if pred_timestamp > datetime.now() - timedelta(days=30):
-                recent_predictions.append(p)
-        except Exception as e:
-            print(f"[WARN] Error parsing timestamp {timestamp_str}: {e}")
-            continue
-    
-    if not recent_predictions:
-        return metrics
-    
-    # Extract all completed trades with enhanced metrics
-    all_trades = []
-    setup_performance = {}
-    time_performance = {}
-    mistake_frequency = {}
-    confluence_performance = {}
-    
-    for pred in recent_predictions:
-        if not pred.get("validation_points"):
-            continue
-            
-        metrics["validated_predictions"] += 1
-        
-        # Extract enhanced trade data
-        trade_data = extract_trade_metrics(pred)
-        if not trade_data or trade_data["outcome"] == "PENDING":
-            continue
-            
-        all_trades.append(trade_data)
-        
-        # Analyze setup types with confluence
-        setup_key = create_setup_signature(trade_data)
-        if setup_key not in setup_performance:
-            setup_performance[setup_key] = {"trades": [], "wins": 0, "total_r": 0, "signals": trade_data["signals_used"]}
-        
-        setup_performance[setup_key]["trades"].append(trade_data)
-        setup_performance[setup_key]["total_r"] += trade_data["r_multiple"]
-        if trade_data["result"] == "WIN":
-            setup_performance[setup_key]["wins"] += 1
-        
-        # Analyze time performance
-        time_key = f"{trade_data['pred_hour']:02d}:00"
-        if time_key not in time_performance:
-            time_performance[time_key] = {"trades": [], "wins": 0, "total_r": 0}
-        
-        time_performance[time_key]["trades"].append(trade_data)
-        time_performance[time_key]["total_r"] += trade_data["r_multiple"]
-        if trade_data["result"] == "WIN":
-            time_performance[time_key]["wins"] += 1
-        
-        # Analyze mistakes
-        for mistake in trade_data["mistake_tags"]:
-            if mistake not in mistake_frequency:
-                mistake_frequency[mistake] = {"count": 0, "total_loss_r": 0}
-            mistake_frequency[mistake]["count"] += 1
-            if trade_data["result"] == "LOSS":
-                mistake_frequency[mistake]["total_loss_r"] += abs(trade_data["r_multiple"])
-        
-        # Analyze confluence performance
-        confluence_score = trade_data["confluence_score"]
-        confluence_bucket = "high" if confluence_score > 7 else "medium" if confluence_score > 4 else "low"
-        if confluence_bucket not in confluence_performance:
-            confluence_performance[confluence_bucket] = {"trades": [], "wins": 0, "total_r": 0}
-        
-        confluence_performance[confluence_bucket]["trades"].append(trade_data)
-        confluence_performance[confluence_bucket]["total_r"] += trade_data["r_multiple"]
-        if trade_data["result"] == "WIN":
-            confluence_performance[confluence_bucket]["wins"] += 1
-    
-    if not all_trades:
-        return metrics
-    
-    # Calculate Core Metrics
-    winning_trades = [t for t in all_trades if t["result"] == "WIN"]
-    losing_trades = [t for t in all_trades if t["result"] == "LOSS"]
-    long_trades = [t for t in all_trades if t["direction"] in ["BUY", "LONG", "BULLISH"]]
-    short_trades = [t for t in all_trades if t["direction"] in ["SELL", "SHORT", "BEARISH"]]
-    
-    metrics["win_rate_overall"] = len(winning_trades) / len(all_trades)
-    metrics["win_rate_long"] = len([t for t in long_trades if t["result"] == "WIN"]) / len(long_trades) if long_trades else 0
-    metrics["win_rate_short"] = len([t for t in short_trades if t["result"] == "WIN"]) / len(short_trades) if short_trades else 0
-    
-    total_r = sum(t["r_multiple"] for t in all_trades)
-    metrics["r_expectancy"] = total_r / len(all_trades)
-    
-    rr_ratios = [t["rr_ratio"] for t in all_trades if t["rr_ratio"] > 0]
-    metrics["average_rr_ratio"] = sum(rr_ratios) / len(rr_ratios) if rr_ratios else 0
-    
-    total_wins_r = sum(t["r_multiple"] for t in winning_trades)
-    total_losses_r = abs(sum(t["r_multiple"] for t in losing_trades))
-    metrics["profit_factor"] = total_wins_r / total_losses_r if total_losses_r > 0 else float('inf')
-    
-    # ENHANCED ANALYSIS - Best Setup Analysis
-    best_setups = {}
-    for setup, data in setup_performance.items():
-        if len(data["trades"]) >= 2:  # Minimum sample size
-            win_rate = data["wins"] / len(data["trades"])
-            avg_r = data["total_r"] / len(data["trades"])
-            expectancy = win_rate * avg_r
-            
-            best_setups[setup] = {
-                "win_rate": win_rate,
-                "avg_r_per_trade": avg_r,
-                "expectancy": expectancy,
-                "total_trades": len(data["trades"]),
-                "signals_used": data["signals"],
-                "confluence_score": calculate_confluence_score(data["signals"])
-            }
-    
-    # Sort by expectancy
-    metrics["best_setup_analysis"] = dict(sorted(best_setups.items(), key=lambda x: x[1]["expectancy"], reverse=True)[:5])
-    
-    # ENHANCED ANALYSIS - Best Time Analysis
-    best_times = {}
-    for time_slot, data in time_performance.items():
-        if len(data["trades"]) >= 2:
-            win_rate = data["wins"] / len(data["trades"])
-            avg_r = data["total_r"] / len(data["trades"])
-            
-            best_times[time_slot] = {
-                "win_rate": win_rate,
-                "avg_r_per_trade": avg_r,
-                "total_trades": len(data["trades"]),
-                "session": classify_time_session(int(time_slot.split(":")[0]))
-            }
-    
-    metrics["best_time_analysis"] = dict(sorted(best_times.items(), key=lambda x: x[1]["win_rate"], reverse=True)[:5])
-    
-    # ENHANCED ANALYSIS - Worst Mistakes Analysis
-    worst_mistakes = {}
-    for mistake, data in mistake_frequency.items():
-        if data["count"] >= 2:
-            avg_loss_per_mistake = data["total_loss_r"] / data["count"] if data["count"] > 0 else 0
-            impact_score = data["count"] * avg_loss_per_mistake
-            
-            worst_mistakes[mistake] = {
-                "frequency": data["count"],
-                "avg_loss_r": avg_loss_per_mistake,
-                "total_impact_r": data["total_loss_r"],
-                "impact_score": impact_score,
-                "mistake_description": get_mistake_description(mistake)
-            }
-    
-    metrics["worst_mistakes_analysis"] = dict(sorted(worst_mistakes.items(), key=lambda x: x[1]["impact_score"], reverse=True)[:5])
-    
-    # ENHANCED ANALYSIS - Confluence Performance
-    for confluence_level, data in confluence_performance.items():
-        if data["trades"]:
-            win_rate = data["wins"] / len(data["trades"])
-            avg_r = data["total_r"] / len(data["trades"])
-            
-            metrics["confluence_performance"][confluence_level] = {
-                "win_rate": win_rate,
-                "avg_r_per_trade": avg_r,
-                "total_trades": len(data["trades"])
-            }
-    
-    # Generate Key Insights (Examples from user requirements)
-    insights = []
-    
-    # Insight 1: Overall profitability despite win rate
-    if metrics["win_rate_overall"] < 0.6 and metrics["r_expectancy"] > 0.2:
-        insights.append(f"Profitable despite {metrics['win_rate_overall']:.0%} win rate due to {metrics['average_rr_ratio']:.1f}:1 RR ratio")
-    
-    # Insight 2: Direction bias analysis
-    if metrics["win_rate_long"] > metrics["win_rate_short"] + 0.15:
-        insights.append(f"Strong long bias: {metrics['win_rate_long']:.0%} vs {metrics['win_rate_short']:.0%} short success")
-    elif metrics["win_rate_short"] > metrics["win_rate_long"] + 0.15:
-        insights.append(f"Strong short bias: {metrics['win_rate_short']:.0%} vs {metrics['win_rate_long']:.0%} long success")
-    
-    # Insight 3: Confluence analysis
-    if "high" in metrics["confluence_performance"] and "low" in metrics["confluence_performance"]:
-        high_conf_wr = metrics["confluence_performance"]["high"]["win_rate"]
-        low_conf_wr = metrics["confluence_performance"]["low"]["win_rate"]
-        if high_conf_wr > low_conf_wr + 0.2:
-            insights.append(f"High confluence setups win {high_conf_wr:.0%} vs {low_conf_wr:.0%} for low confluence")
-    
-    # Insight 4: Best setup identification
-    if metrics["best_setup_analysis"]:
-        best_setup = list(metrics["best_setup_analysis"].keys())[0]
-        best_setup_data = metrics["best_setup_analysis"][best_setup]
-        if best_setup_data["win_rate"] > 0.7:
-            active_signals = [k for k, v in best_setup_data["signals_used"].items() if v]
-            insights.append(f"Best setup ({' + '.join(active_signals[:2])}) hits TP {best_setup_data['win_rate']:.0%} of the time")
-    
-    # Insight 5: Time-based performance
-    if metrics["best_time_analysis"]:
-        best_time = list(metrics["best_time_analysis"].keys())[0]
-        worst_time = list(metrics["best_time_analysis"].keys())[-1]
-        best_wr = metrics["best_time_analysis"][best_time]["win_rate"]
-        worst_wr = metrics["best_time_analysis"][worst_time]["win_rate"]
-        if best_wr > worst_wr + 0.2:
-            insights.append(f"{best_time} calls perform {best_wr:.0%} vs {worst_time} at {worst_wr:.0%}")
-    
-    metrics["key_insights"] = insights
-    
-    # Generate Actionable Recommendations
-    recommendations = []
-    
-    # Recommendation 1: Focus on best setups
-    if metrics["best_setup_analysis"]:
-        best_setup = list(metrics["best_setup_analysis"].keys())[0]
-        if metrics["best_setup_analysis"][best_setup]["expectancy"] > 0.5:
-            recommendations.append(f"Increase position size on {best_setup} setups (highest expectancy)")
-    
-    # Recommendation 2: Avoid worst mistakes
-    if metrics["worst_mistakes_analysis"]:
-        worst_mistake = list(metrics["worst_mistakes_analysis"].keys())[0]
-        recommendations.append(f"Priority fix: Avoid {worst_mistake} (most costly mistake)")
-    
-    # Recommendation 3: Time optimization
-    if metrics["best_time_analysis"]:
-        best_time = list(metrics["best_time_analysis"].keys())[0]
-        worst_time = list(metrics["best_time_analysis"].keys())[-1]
-        recommendations.append(f"Focus on {best_time} predictions, reduce {worst_time} frequency")
-    
-    # Recommendation 4: Confluence filtering
-    if "low" in metrics["confluence_performance"]:
-        low_conf_performance = metrics["confluence_performance"]["low"]
-        if low_conf_performance["win_rate"] < 0.4:
-            recommendations.append("Filter out low confluence setups (win rate too low)")
-    
-    metrics["actionable_recommendations"] = recommendations
-    
-    return metrics
-
-def create_setup_signature(trade_data):
-    """Create a unique signature for setup type based on signals used"""
-    signals = trade_data["signals_used"]
-    active_signals = [k for k, v in signals.items() if v]
-    
-    # Create meaningful combinations
-    if len(active_signals) == 0:
-        return "no_confluence"
-    elif len(active_signals) == 1:
-        return f"single_{active_signals[0]}"
-    elif len(active_signals) >= 3:
-        # Sort for consistency and take top 3 most important
-        signal_priority = ["technical_analysis", "support_resistance", "divergence", "volume_analysis", "rsi_momentum"]
-        prioritized = [s for s in signal_priority if s in active_signals]
-        others = [s for s in active_signals if s not in signal_priority]
-        top_signals = (prioritized + others)[:3]
-        return f"multi_{'_'.join(sorted(top_signals))}"
-    else:
-        return f"dual_{'_'.join(sorted(active_signals))}"
-
-def get_mistake_description(mistake_code):
-    """Get human-readable description of mistake patterns"""
-    descriptions = {
-        "poor_rr_ratio": "Taking trades with insufficient risk-reward ratio",
-        "ignored_greed_signal": "Buying during extreme greed conditions",
-        "ignored_fear_signal": "Selling during extreme fear conditions", 
-        "short_in_low_volatility": "Shorting during low volatility periods",
-        "insufficient_rr_for_volatility": "Inadequate RR ratio for high volatility",
-        "overconfident_loss": "High confidence predictions that failed",
-        "rushed_entry": "Entering trades too quickly without confirmation",
-        "bought_overbought": "Buying when RSI shows overbought conditions",
-        "sold_oversold": "Selling when RSI shows oversold conditions",
-        "bad_timing_session": "Trading during low-activity time sessions"
-    }
-    return descriptions.get(mistake_code, mistake_code.replace("_", " ").title())
-
-def extract_trade_metrics(prediction):
-    """Extract comprehensive trade metrics from a prediction for advanced analysis - Enhanced Version"""
+    """Calculate overall accuracy metrics for predictions"""
     try:
-        # Get prediction details
-        pro_analysis = prediction.get("predictions", {}).get("professional_analysis", {})
-        ai_prediction = prediction.get("predictions", {}).get("ai_prediction", "")
-        market_data = prediction.get("market_data", {})
+        if not predictions:
+            return {
+                "total_predictions": 0,
+                "overall_accuracy": 0,
+                "avg_confidence": 0
+            }
         
-        if not pro_analysis and not ai_prediction:
-            return None
-
-        # Extract price targets
-        if pro_analysis:
-            price_targets = pro_analysis.get("price_targets", {})
-            entry_price = price_targets.get("current", 0) or 0
-            tp_price = price_targets.get("target_1", 0) or 0
-            sl_price = price_targets.get("stop_loss", 0) or 0
-            direction = pro_analysis.get("primary_scenario", "NEUTRAL") or "NEUTRAL"
-            confidence = pro_analysis.get("confidence_level", "medium")
-            # Convert confidence level to numeric
-            if isinstance(confidence, str):
-                confidence_map = {"low": 30, "medium": 60, "high": 85}
-                confidence = confidence_map.get(confidence.lower(), 60)
-            elif confidence is None:
-                confidence = 60
-        else:
-            # Fallback to AI prediction parsing
-            entry_price = extract_price_from_text(ai_prediction, "entry")
-            tp_price = extract_price_from_text(ai_prediction, "target")
-            sl_price = extract_price_from_text(ai_prediction, "stop")
-            direction = extract_direction_from_text(ai_prediction)
-            confidence = 60  # Default confidence
-
-        # Determine outcome from validation points
-        validation_points = prediction.get("validation_points", [])
-        outcome = "PENDING"
-        actual_exit_price = entry_price
-        duration_hours = 0
-        hit_timestamp = None
+        total_predictions = 0
+        correct_predictions = 0
+        total_confidence = 0
         
-        for vp in validation_points:
-            try:
-                # Handle both timestamp formats (ISO and space-separated)
-                timestamp_str = vp["timestamp"]
-                if 'T' in timestamp_str:
-                    # ISO format from database: '2025-05-24T17:22:27'
-                    vp_time = datetime.fromisoformat(timestamp_str.replace('Z', ''))
-                else:
-                    # Space format from JSON: '2025-05-24 17:22:27'
-                    vp_time = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
-            except Exception as e:
-                print(f"[WARN] Error parsing validation point timestamp {timestamp_str}: {e}")
-                continue
+        for prediction in predictions:
+            for coin in ["BTC", "ETH"]:
+                coin_pred = prediction.get("predictions", {}).get(coin, {})
+                if not coin_pred:
+                    continue
                 
-            if vp["type"] in ["PROFESSIONAL_TARGET_1", "PROFESSIONAL_TARGET_2"]:
-                outcome = "TP_HIT"
-                actual_exit_price = vp["actual_price"]
-                hit_timestamp = vp_time
-                break
-            elif vp["type"] == "PROFESSIONAL_STOP_LOSS":
-                outcome = "SL_HIT"
-                actual_exit_price = vp["actual_price"]
-                hit_timestamp = vp_time
-                break
-
-        # Calculate duration if trade completed
-        if hit_timestamp:
-            try:
-                # Handle both timestamp formats for prediction timestamp
-                pred_timestamp_str = prediction["timestamp"]
-                if 'T' in pred_timestamp_str:
-                    # ISO format from database: '2025-05-24T17:22:27'
-                    pred_time = datetime.fromisoformat(pred_timestamp_str.replace('Z', ''))
-                else:
-                    # Space format from JSON: '2025-05-24 17:22:27'
-                    pred_time = datetime.strptime(pred_timestamp_str, "%Y-%m-%d %H:%M:%S")
-                duration_hours = (hit_timestamp - pred_time).total_seconds() / 3600
-            except Exception as e:
-                print(f"[WARN] Error parsing prediction timestamp {pred_timestamp_str}: {e}")
-                duration_hours = 0
-
-        if outcome == "PENDING" and duration_hours == 0:
-            # Check if trade should be marked as breakeven or partial
-            current_time = datetime.now()
-            try:
-                # Handle both timestamp formats for prediction timestamp
-                pred_timestamp_str = prediction["timestamp"]
-                if 'T' in pred_timestamp_str:
-                    pred_time = datetime.fromisoformat(pred_timestamp_str.replace('Z', ''))
-                else:
-                    pred_time = datetime.strptime(pred_timestamp_str, "%Y-%m-%d %H:%M:%S")
-                hours_since = (current_time - pred_time).total_seconds() / 3600
-            except Exception as e:
-                print(f"[WARN] Error parsing prediction timestamp for breakeven check: {e}")
-                hours_since = 0
-            
-            if hours_since > 24:  # After 24 hours, evaluate as breakeven if no hits
-                outcome = "BREAKEVEN"
-                actual_exit_price = entry_price
-
-        # Calculate comprehensive metrics
-        risk = abs(entry_price - sl_price) if sl_price and entry_price else 0
+                # Skip if not validated
+                if not prediction.get("hourly_validated"):
+                    continue
+                
+                total_predictions += 1
+                
+                # Get confidence level
+                confidence = coin_pred.get("confidence_level", "medium")
+                confidence_value = {
+                    "high": 80,
+                    "medium": 60,
+                    "low": 40
+                }.get(confidence, 50)
+                
+                total_confidence += confidence_value
+                
+                # Check if prediction was correct
+                validation_points = prediction.get("validation_points", [])
+                for vp in validation_points:
+                    if vp.get("coin") == coin and vp.get("type") in ["PROFESSIONAL_TARGET_1", "PROFESSIONAL_TARGET_2"]:
+                        correct_predictions += 1
+                        break
         
-        # Calculate R-multiple (how many R risked vs gained)
-        if outcome == "TP_HIT":
-            reward = abs(actual_exit_price - entry_price)
-            r_multiple = reward / risk if risk > 0 else 0
-        elif outcome == "SL_HIT":
-            r_multiple = -1  # Lost 1R
-        elif outcome == "BREAKEVEN":
-            r_multiple = 0
-        else:
-            # Pending - calculate unrealized R
-            current_btc = market_data.get("btc_price", entry_price)
-            unrealized_pnl = abs(current_btc - entry_price)
-            r_multiple = unrealized_pnl / risk if risk > 0 else 0
-            if direction in ["SELL", "SHORT", "BEARISH"] and current_btc > entry_price:
-                r_multiple = -r_multiple
-            elif direction in ["BUY", "LONG", "BULLISH"] and current_btc < entry_price:
-                r_multiple = -r_multiple
-
-        # Calculate RR ratio
-        potential_reward = abs(tp_price - entry_price) if tp_price and entry_price else 0
-        rr_ratio = potential_reward / risk if risk > 0 else 0
-
-        # Calculate actual price movement over 12h
-        try:
-            # Handle both timestamp formats for prediction timestamp
-            pred_timestamp_str = prediction["timestamp"]
-            if 'T' in pred_timestamp_str:
-                pred_time = datetime.fromisoformat(pred_timestamp_str.replace('Z', ''))
-            else:
-                pred_time = datetime.strptime(pred_timestamp_str, "%Y-%m-%d %H:%M:%S")
-            twelve_hour_mark = pred_time + timedelta(hours=12)
-        except Exception as e:
-            print(f"[WARN] Error parsing prediction timestamp for 12h calculation: {e}")
-            pred_time = datetime.now()
-            twelve_hour_mark = pred_time + timedelta(hours=12)
+        # Calculate metrics
+        overall_accuracy = (correct_predictions / total_predictions * 100) if total_predictions > 0 else 0
+        avg_confidence = (total_confidence / total_predictions) if total_predictions > 0 else 0
         
-        # Try to find the 12h price from validation points or current price
-        twelve_hour_price = market_data.get("btc_price", entry_price) or entry_price or 0
-        actual_move_12h = abs(twelve_hour_price - entry_price) / entry_price if entry_price and twelve_hour_price else 0
-
-        # Extract market conditions - ENHANCED
-        btc_rsi = market_data.get("btc_rsi", 50) or 50
-        fear_greed = market_data.get("fear_greed", 50) or 50
-        if isinstance(fear_greed, dict):
-            fear_greed = fear_greed.get("index", 50) or 50
-
-        # Enhanced volatility assessment using multiple indicators
-        btc_price = market_data.get("btc_price", 0) or 0
-        volatility = "medium"  # Default
-        volatility_score = 0
-        
-        # Method 1: Price movement volatility
-        if tp_price and entry_price:
-            price_range_pct = abs(tp_price - entry_price) / entry_price
-            if price_range_pct > 0.05:  # >5% move expected
-                volatility_score += 2
-            elif price_range_pct > 0.03:  # >3% move expected
-                volatility_score += 1
-
-        # Method 2: RSI volatility (extreme RSI = high volatility)
-        if btc_rsi > 70 or btc_rsi < 30:
-            volatility_score += 1
-
-        # Method 3: Fear/Greed extremes = high volatility
-        if fear_greed > 75 or fear_greed < 25:
-            volatility_score += 1
-
-        # Classify volatility
-        if volatility_score >= 3:
-            volatility = "high"
-        elif volatility_score <= 1:
-            volatility = "low"
-
-        # Sentiment classification - ENHANCED
-        sentiment = "neutral"
-        if fear_greed < 25:
-            sentiment = "extreme_fear"
-        elif fear_greed < 40:
-            sentiment = "fear"
-        elif fear_greed > 75:
-            sentiment = "extreme_greed"
-        elif fear_greed > 60:
-            sentiment = "greed"
-
-        # Divergence detection (basic implementation)
-        divergence_present = False
-        # Check if price and sentiment are diverging
-        if direction in ["BUY", "LONG", "BULLISH"] and fear_greed < 40:
-            divergence_present = True  # Bullish divergence - buying in fear
-        elif direction in ["SELL", "SHORT", "BEARISH"] and fear_greed > 60:
-            divergence_present = True  # Bearish divergence - selling in greed
-
-        # Extract signals used (confluence analysis) - ENHANCED
-        signals_used = extract_confluence_signals(prediction)
-        setup_strength = len([s for s in signals_used.values() if s]) / len(signals_used) if signals_used else 0
-
-        # Mistake tagging - ENHANCED
-        mistake_tags = identify_trade_mistakes(prediction, outcome, market_data, {
-            "rr_ratio": rr_ratio,
-            "volatility": volatility,
-            "sentiment": sentiment,
-            "confidence": confidence,
-            "duration_hours": duration_hours
-        })
-
-        # Time analysis
-        try:
-            # Handle both timestamp formats for prediction timestamp
-            pred_timestamp_str = prediction["timestamp"]
-            if 'T' in pred_timestamp_str:
-                pred_time = datetime.fromisoformat(pred_timestamp_str.replace('Z', ''))
-            else:
-                pred_time = datetime.strptime(pred_timestamp_str, "%Y-%m-%d %H:%M:%S")
-            pred_hour = pred_time.hour
-        except Exception as e:
-            print(f"[WARN] Error parsing prediction timestamp for hour extraction: {e}")
-            pred_hour = 12  # Default to noon
-        
-        time_session = classify_time_session(pred_hour)
-
         return {
-            # Core tracking data
-            "timestamp": prediction["timestamp"],
-            "prediction_id": prediction.get("date", "") + "_" + prediction.get("session", ""),
-            
-            # Trade details
-            "direction": direction,
-            "entry_price": entry_price,
-            "tp_price": tp_price,
-            "sl_price": sl_price,
-            "actual_exit_price": actual_exit_price,
-            "outcome": outcome,
-            
-            # Performance metrics
-            "r_multiple": r_multiple,
-            "rr_ratio": rr_ratio,
-            "duration_hours": duration_hours,
-            "actual_move_12h": actual_move_12h,
-            
-            # Market conditions
-            "rsi": btc_rsi,
-            "fear_greed": fear_greed,
-            "sentiment": sentiment,
-            "volatility": volatility,
-            "volatility_score": volatility_score,
-            "divergence_present": divergence_present,
-            
-            # Confluence & Setup
-            "signals_used": signals_used,
-            "setup_strength": setup_strength,
-            "confluence_score": calculate_confluence_score(signals_used),
-            
-            # Analysis
-            "confidence": confidence,
-            "time_session": time_session,
-            "pred_hour": pred_hour,
-            "mistake_tags": mistake_tags,
-            
-            # Additional context
-            "strongest_signal": pro_analysis.get("key_factors", {}).get("strongest_signal", ["unknown", 0])[0] if pro_analysis else "unknown",
-            "bullish_probability": pro_analysis.get("bullish_probability", 50) if pro_analysis else 50,
-            "bearish_probability": pro_analysis.get("bearish_probability", 50) if pro_analysis else 50,
-            
-            # Result classification
-            "result": "WIN" if outcome == "TP_HIT" else "LOSS" if outcome == "SL_HIT" else "NEUTRAL"
+            "total_predictions": total_predictions,
+            "overall_accuracy": overall_accuracy,
+            "avg_confidence": avg_confidence
         }
         
     except Exception as e:
-        print(f"[ERROR] Extracting enhanced trade metrics: {e}")
-        import traceback
-        traceback.print_exc()
-        return {}
-        return None
-
-def identify_setup_type(prediction):
-    """Identify the type of setup/confluence signals used"""
-    try:
-        pro_analysis = prediction.get("predictions", {}).get("professional_analysis", {})
-        if not pro_analysis:
-            return "basic"
-        
-        strongest_signal = pro_analysis.get("key_factors", {}).get("strongest_signal", ["unknown", 0])[0]
-        scenario = pro_analysis.get("primary_scenario", "neutral")
-        confidence = pro_analysis.get("confidence_level", "low")
-        
-        # Create setup type based on confluence
-        component_scores = pro_analysis.get("component_scores", {})
-        high_scoring_components = [k for k, v in component_scores.items() if v > 7.0]
-        
-        if len(high_scoring_components) >= 3:
-            setup_type = "high_confluence"
-        elif len(high_scoring_components) >= 2:
-            setup_type = "medium_confluence"
-        else:
-            setup_type = "single_signal"
-        
-        # Add strongest signal to setup type
-        setup_type += f"_{strongest_signal}"
-        
-        return setup_type
-    except Exception:
-        return "unknown"
-
-def identify_mistake_patterns(trades):
-    """Identify recurring mistake patterns that hurt performance"""
-    mistakes = []
-    
-    if not trades:
-        return mistakes
-    
-    # Analyze overconfidence
-    overconfident_losses = [t for t in trades if t["confidence"] > 80 and t["outcome"] == "SL_HIT"]
-    if len(overconfident_losses) / len(trades) > 0.3:
-        mistakes.append({
-            "type": "overconfidence",
-            "description": f"High confidence trades ({len(overconfident_losses)}) hitting SL",
-            "frequency": len(overconfident_losses),
-            "impact": "Overestimating certainty in uncertain markets"
-        })
-    
-    # Analyze poor RR trades
-    poor_rr_trades = [t for t in trades if t["rr_ratio"] < 1.5 and t["outcome"] == "SL_HIT"]
-    if len(poor_rr_trades) / len(trades) > 0.2:
-        mistakes.append({
-            "type": "poor_risk_reward",
-            "description": f"Taking trades with RR < 1.5 that failed ({len(poor_rr_trades)})",
-            "frequency": len(poor_rr_trades),
-            "impact": "Not maintaining proper risk-reward ratios"
-        })
-    
-    # Analyze sentiment timing
-    greed_losses = [t for t in trades if t["fear_greed"] > 70 and t["direction"] in ["LONG", "BUY"] and t["outcome"] == "SL_HIT"]
-    if len(greed_losses) > 3:
-        mistakes.append({
-            "type": "greed_timing",
-            "description": f"Buying during extreme greed ({len(greed_losses)} failures)",
-            "frequency": len(greed_losses),
-            "impact": "Poor market timing - buying tops"
-        })
-    
-    # Analyze RSI extremes
-    rsi_overbought_losses = [t for t in trades if t["rsi"] > 70 and t["direction"] in ["LONG", "BUY"] and t["outcome"] == "SL_HIT"]
-    if len(rsi_overbought_losses) > 2:
-        mistakes.append({
-            "type": "rsi_overbought",
-            "description": f"Longing while RSI > 70 ({len(rsi_overbought_losses)} failures)",
-            "frequency": len(rsi_overbought_losses),
-            "impact": "Ignoring overbought conditions"
-        })
-    
-    return sorted(mistakes, key=lambda x: x["frequency"], reverse=True)
-
-def generate_improvement_suggestions(accuracy_metrics, predictions):
-    """Generate suggestions for AI improvement based on validation results"""
-    suggestions = {
-        "timestamp": datetime.now().isoformat(),
-        "accuracy_summary": accuracy_metrics,
-        "improvement_areas": [],
-        "successful_patterns": [],
-        "recommendations": []
-    }
-    
-    # Analyze accuracy and generate suggestions
-    if accuracy_metrics["professional_accuracy"] < 0.6:
-        suggestions["improvement_areas"].append("Professional target accuracy below 60%")
-        suggestions["recommendations"].append("Adjust professional analysis weightings")
-    
-    if accuracy_metrics["target_hit_rate"] < 0.4:
-        suggestions["improvement_areas"].append("Target hit rate too low")
-        suggestions["recommendations"].append("Revise target distance calculations")
-    
-    if accuracy_metrics["average_confidence"] > 80 and accuracy_metrics["professional_accuracy"] < 0.7:
-        suggestions["improvement_areas"].append("Overconfidence detected")
-        suggestions["recommendations"].append("Calibrate confidence scoring system")
-    
-    return suggestions
-
-def save_improvement_data(improvement_data):
-    """Save improvement suggestions for AI learning"""
-    improvement_file = "ai_improvement_log.json"
-    
-    improvements = []
-    if os.path.exists(improvement_file):
-        try:
-            with open(improvement_file, "r") as f:
-                improvements = json.load(f)
-        except Exception:
-            improvements = []
-    
-    improvements.append(improvement_data)
-    
-    # Keep only last 30 days of improvements
-    cutoff = datetime.now() - timedelta(days=30)
-    improvements = [imp for imp in improvements 
-                   if datetime.fromisoformat(imp["timestamp"]) > cutoff]
-    
-    with open(improvement_file, "w") as f:
-        json.dump(improvements, f, indent=4)
-
-def format_notification_message(notification):
-    """Format a notification message for Telegram"""
-    if notification["type"] == "professional_target":
-        target_num = notification.get('target_number', 1)
-        return (
-            f"🎯 <b>PROFESSIONAL TARGET {target_num} HIT</b>\n\n"
-            f"Coin: {notification['coin']}\n"
-            f"Target Level: ${notification['target_level']:,.2f}\n"
-            f"Current Price: ${notification['current_price']:,.2f}\n"
-            f"Scenario: {notification['scenario']}\n\n"
-            f"<i>Professional analysis target reached successfully!</i>"
-        )
-    elif notification["type"] == "professional_stop_loss":
-        return (
-            f"⚠️ <b>PROFESSIONAL STOP LOSS HIT</b>\n\n"
-            f"Coin: {notification['coin']}\n"
-            f"Stop Level: ${notification['stop_level']:,.2f}\n"
-            f"Current Price: ${notification['current_price']:,.2f}\n"
-            f"Scenario: {notification['scenario']}\n\n"
-            f"<i>Professional stop loss triggered. Position closed.</i>"
-        )
-    else:
-        return f"📊 Validation update: {notification['type']} for {notification['coin']}"
-
-def analyze_last_prediction_cycle(predictions, current_hour):
-    """Analyze the most recent prediction cycle (8am or 8pm) for detailed feedback"""
-    if not predictions:
-        return None
-    
-    # Determine which cycle we're analyzing based on current time
-    vietnam_hour = (current_hour + 7) % 24  # Convert UTC to Vietnam time
-    
-    if vietnam_hour == 8:  # 8am Vietnam - analyze 8pm prediction from previous day
-        target_hour = 20  # 8pm
-        target_date = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
-    else:  # 8pm Vietnam - analyze 8am prediction from same day
-        target_hour = 8   # 8am
-        target_date = datetime.now().strftime('%Y-%m-%d')
-    
-    # Find the most recent prediction from the target cycle
-    target_predictions = []
-    for pred in predictions:
-        try:
-            timestamp_str = pred["timestamp"]
-            if 'T' in timestamp_str:
-                pred_time = datetime.fromisoformat(timestamp_str.replace('Z', ''))
-            else:
-                pred_time = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
-            
-            # Check if this prediction is from the target cycle
-            if (pred_time.strftime('%Y-%m-%d') == target_date and 
-                abs(pred_time.hour - target_hour) <= 1):  # Allow 1 hour tolerance
-                target_predictions.append(pred)
-        except Exception:
-            continue
-    
-    if not target_predictions:
+        print(f"[ERROR] Failed to calculate accuracy metrics: {e}")
         return {
-            "status": "no_prediction_found",
-            "cycle": f"{target_hour}:00 on {target_date}",
-            "message": f"No prediction found for {target_hour}:00 cycle"
+            "total_predictions": 0,
+            "overall_accuracy": 0,
+            "avg_confidence": 0
         }
-    
-    # Get the most recent prediction from the target cycle
-    latest_pred = max(target_predictions, key=lambda x: x["timestamp"])
-    
-    # Analyze this prediction
-    analysis = {
-        "status": "found",
-        "cycle": f"{target_hour}:00 on {target_date}",
-        "timestamp": latest_pred["timestamp"],
-        "prediction_summary": {},
-        "outcome_analysis": {},
-        "performance_metrics": {}
-    }
-    
-    # Extract prediction details
-    pro_analysis = latest_pred.get("predictions", {}).get("professional_analysis", {})
-    if pro_analysis:
-        price_targets = pro_analysis.get("price_targets", {})
-        scenario = pro_analysis.get("primary_scenario", "NEUTRAL")
-        confidence = pro_analysis.get("confidence_level", "medium")
-        
-        analysis["prediction_summary"] = {
-            "scenario": scenario,
-            "confidence": confidence,
-            "entry_price": price_targets.get("current", 0),
-            "target_1": price_targets.get("target_1", 0),
-            "target_2": price_targets.get("target_2", 0),
-            "stop_loss": price_targets.get("stop_loss", 0)
-        }
-    
-    # Analyze outcome
-    validation_points = latest_pred.get("validation_points", [])
-    outcome = "PENDING"
-    hit_price = None
-    hit_type = None
-    
-    for vp in validation_points:
-        if vp["type"] in ["PROFESSIONAL_TARGET_1", "PROFESSIONAL_TARGET_2"]:
-            outcome = "TARGET_HIT"
-            hit_price = vp["actual_price"]
-            hit_type = vp["type"].replace("PROFESSIONAL_", "")
-            break
-        elif vp["type"] == "PROFESSIONAL_STOP_LOSS":
-            outcome = "STOP_LOSS_HIT"
-            hit_price = vp["actual_price"]
-            hit_type = "STOP_LOSS"
-            break
-    
-    # Calculate time elapsed
-    try:
-        if 'T' in latest_pred["timestamp"]:
-            pred_time = datetime.fromisoformat(latest_pred["timestamp"].replace('Z', ''))
-        else:
-            pred_time = datetime.strptime(latest_pred["timestamp"], "%Y-%m-%d %H:%M:%S")
-        
-        hours_elapsed = (datetime.now() - pred_time).total_seconds() / 3600
-    except Exception:
-        hours_elapsed = 0
-    
-    analysis["outcome_analysis"] = {
-        "outcome": outcome,
-        "hit_price": hit_price,
-        "hit_type": hit_type,
-        "hours_elapsed": hours_elapsed,
-        "status_message": format_outcome_message(outcome, hit_type, hours_elapsed)
-    }
-    
-    # Calculate R-multiple if possible
-    entry_price = analysis["prediction_summary"].get("entry_price", 0)
-    stop_loss = analysis["prediction_summary"].get("stop_loss", 0)
-    r_multiple = 0
-    
-    if outcome != "PENDING" and entry_price and stop_loss and hit_price:
-        risk = abs(entry_price - stop_loss)
-        if outcome == "TARGET_HIT":
-            reward = abs(hit_price - entry_price)
-            r_multiple = reward / risk if risk > 0 else 0
-        elif outcome == "STOP_LOSS_HIT":
-            r_multiple = -1
-    
-    analysis["performance_metrics"] = {
-        "r_multiple": r_multiple,
-        "result": "WIN" if outcome == "TARGET_HIT" else "LOSS" if outcome == "STOP_LOSS_HIT" else "PENDING"
-    }
-    
-    return analysis
-
-def format_outcome_message(outcome, hit_type, hours_elapsed):
-    """Format a human-readable outcome message"""
-    if outcome == "TARGET_HIT":
-        return f"✅ {hit_type} reached after {hours_elapsed:.1f}h"
-    elif outcome == "STOP_LOSS_HIT":
-        return f"❌ Stop loss hit after {hours_elapsed:.1f}h"
-    else:
-        if hours_elapsed > 24:
-            return f"⏳ Still pending after {hours_elapsed:.1f}h"
-        else:
-            return f"⏳ Active trade ({hours_elapsed:.1f}h elapsed)"
-
-def format_accuracy_summary(metrics, last_prediction_analysis=None):
-    """Format enhanced accuracy metrics summary for Telegram - Professional Trader Style"""
-    overall_score = (
-        metrics.get('win_rate_overall', 0) * 0.4 +
-        max(0, metrics.get('r_expectancy', 0)) * 0.3 +
-        min(1, metrics.get('average_rr_ratio', 0) / 2) * 0.3
-    ) * 100
-
-    # Get Vietnam time for display
-    utc_time = datetime.now()
-    vietnam_time = utc_time + timedelta(hours=7)
-    
-    # Format the comprehensive report
-    report = f"📊 <b>PROFESSIONAL TRADING PERFORMANCE</b>\n"
-    report += f"📅 {vietnam_time.strftime('%Y-%m-%d %H:%M')} (Vietnam Time)\n"
-    report += f"{'═' * 35}\n\n"
-    
-    # Last Prediction Analysis Section
-    if last_prediction_analysis and last_prediction_analysis["status"] == "found":
-        pred_analysis = last_prediction_analysis
-        pred_summary = pred_analysis["prediction_summary"]
-        outcome_analysis = pred_analysis["outcome_analysis"]
-        
-        report += f"🔍 <b>LAST PREDICTION CYCLE</b>\n"
-        report += f"📅 {pred_analysis['cycle']}\n"
-        report += f"🎯 Scenario: {pred_summary.get('scenario', 'N/A')}\n"
-        report += f"💰 Entry: ${pred_summary.get('entry_price', 0):,.0f} → TP: ${pred_summary.get('target_1', 0):,.0f}\n"
-        report += f"🛡️ Stop Loss: ${pred_summary.get('stop_loss', 0):,.0f}\n"
-        report += f"📊 {outcome_analysis['status_message']}\n"
-        
-        if outcome_analysis['outcome'] != 'PENDING':
-            r_multiple = pred_analysis["performance_metrics"]["r_multiple"]
-            result_emoji = "✅" if r_multiple > 0 else "❌"
-            report += f"{result_emoji} Result: {r_multiple:+.2f}R\n"
-        
-        report += "\n"
-    elif last_prediction_analysis and last_prediction_analysis["status"] == "no_prediction_found":
-        report += f"🔍 <b>LAST PREDICTION CYCLE</b>\n"
-        report += f"⚠️ {last_prediction_analysis['message']}\n\n"
-
-    # Overall Performance
-    report += f"🏆 <b>OVERALL SCORE: {overall_score:.1f}%</b>\n\n"
-    
-    # Core Metrics
-    report += f"<b>📈 CORE PERFORMANCE</b>\n"
-    report += f"• Win Rate: {metrics.get('win_rate_overall', 0):.1%}\n"
-    report += f"• R-Expectancy: {metrics.get('r_expectancy', 0):.2f}R\n"
-    report += f"• Avg RR Ratio: {metrics.get('average_rr_ratio', 0):.1f}:1\n"
-    report += f"• Total Trades: {metrics.get('validated_predictions', 0)}\n\n"
-    
-    # Directional Performance
-    report += f"<b>📊 DIRECTIONAL ANALYSIS</b>\n"
-    long_rate = metrics.get('win_rate_long', 0)
-    short_rate = metrics.get('win_rate_short', 0)
-    
-    if long_rate > 0 or short_rate > 0:
-        report += f"• Long Trades: {long_rate:.1%}\n"
-        report += f"• Short Trades: {short_rate:.1%}\n"
-        
-        # Bias analysis
-        if long_rate > short_rate + 0.1:
-            bias = "🟢 Long Bias"
-        elif short_rate > long_rate + 0.1:
-            bias = "🔴 Short Bias"
-        else:
-            bias = "⚪ Balanced"
-        report += f"• Direction Bias: {bias}\n\n"
-    else:
-        report += f"• Not enough directional data yet\n\n"
-    
-    # Best Setups & Timing
-    report += f"<b>⭐ BEST PERFORMING</b>\n"
-    report += f"• Best Time: {metrics.get('best_timeframe', 'Analyzing...')}\n"
-    report += f"• Best Setup: {metrics.get('best_setup_type', 'Analyzing...')}\n\n"
-    
-    # Market Conditions Performance
-    vol_perf = metrics.get('volatility_performance', {})
-    if vol_perf:
-        report += f"<b>🌊 VOLATILITY PERFORMANCE</b>\n"
-        for vol_level, stats in vol_perf.items():
-            if stats['trade_count'] >= 2:
-                report += f"• {vol_level.title()}: {stats['win_rate']:.1%} ({stats['trade_count']} trades)\n"
-        report += "\n"
-    
-    # Sentiment Performance
-    sent_perf = metrics.get('sentiment_performance', {})
-    if sent_perf:
-        report += f"<b>😨😐😍 SENTIMENT PERFORMANCE</b>\n"
-        for sentiment, stats in sent_perf.items():
-            if stats['trade_count'] >= 2:
-                emoji = "😨" if sentiment == "fear" else "😍" if sentiment == "greed" else "😐"
-                report += f"• {emoji} {sentiment.title()}: {stats['win_rate']:.1%} (RR: {stats['avg_rr']:.1f})\n"
-        report += "\n"
-    
-    # Worst Mistakes
-    mistakes = metrics.get('worst_mistakes', [])
-    if mistakes:
-        report += f"<b>⚠️ TOP MISTAKES TO AVOID</b>\n"
-        for i, mistake in enumerate(mistakes[:3], 1):
-            report += f"{i}. {mistake['description']}\n"
-        report += "\n"
-    
-    # Pattern Recognition
-    patterns = metrics.get('prediction_patterns', {})
-    if patterns:
-        avg_conf_winners = patterns.get('avg_confidence_winners', 0)
-        avg_conf_losers = patterns.get('avg_confidence_losers', 0)
-        
-        if avg_conf_winners > 0 and avg_conf_losers > 0:
-            confidence_edge = avg_conf_winners - avg_conf_losers
-            report += f"<b>🧠 PATTERN INSIGHTS</b>\n"
-            report += f"• Winner Confidence: {avg_conf_winners:.0f}%\n"
-            report += f"• Loser Confidence: {avg_conf_losers:.0f}%\n"
-            
-            if confidence_edge > 10:
-                report += f"• ✅ Good confidence calibration (+{confidence_edge:.0f})\n"
-            elif confidence_edge < -5:
-                report += f"• ❌ Overconfident on losers ({confidence_edge:.0f})\n"
-            else:
-                report += f"• ⚪ Neutral confidence pattern\n"
-            report += "\n"
-    
-    # Key Insights
-    report += f"<b>💡 KEY INSIGHTS</b>\n"
-    
-    # R-Expectancy insight
-    r_exp = metrics.get('r_expectancy', 0)
-    if r_exp > 0.5:
-        report += f"• 🟢 Positive expectancy - profitable system\n"
-    elif r_exp > 0:
-        report += f"• 🟡 Marginally profitable - room for improvement\n"
-    else:
-        report += f"• 🔴 Negative expectancy - system needs adjustment\n"
-    
-    # Win rate vs RR insight
-    win_rate = metrics.get('win_rate_overall', 0)
-    avg_rr = metrics.get('average_rr_ratio', 0)
-    if win_rate > 0 and avg_rr > 0:
-        breakeven_wr = 1 / (1 + avg_rr)
-        if win_rate > breakeven_wr:
-            edge = (win_rate - breakeven_wr) * 100
-            report += f"• 📈 {edge:.1f}% edge over breakeven\n"
-        else:
-            deficit = (breakeven_wr - win_rate) * 100
-            report += f"• 📉 {deficit:.1f}% below breakeven needs\n"
-    
-    report += f"\n<i>🚀 System learning and evolving continuously!</i>"
-    
-    return report
 
 def validate_target_hit(current_price, target_price, target_type, scenario="NEUTRAL"):
-    """Check if a target was hit based on scenario and target type"""
-    if not current_price or not target_price:
-        return False
-    
-    # For professional analysis targets
-    if target_type.startswith("TARGET"):
-        if scenario.upper() in ["BUY", "STRONG BUY", "BULLISH"]:
-            # Bullish scenario: targets should be above current price
-            return current_price >= target_price
-        elif scenario.upper() in ["SELL", "STRONG SELL", "BEARISH"]:
-            # Bearish scenario: targets should be below current price
-            return current_price <= target_price
+    """Validate if a target price has been hit"""
+    try:
+        if not current_price or not target_price:
+            return False, None
+        
+        # Convert prices to float if they're strings
+        current_price = float(current_price)
+        target_price = float(target_price)
+        
+        # Calculate price difference percentage
+        price_diff_pct = abs((current_price - target_price) / target_price * 100)
+        
+        # Define hit thresholds based on target type
+        if target_type.startswith("TAKE_PROFIT"):
+            # Take profit targets are hit when price moves beyond them
+            if scenario == "BULLISH":
+                hit = current_price >= target_price
+                hit_type = "BULLISH_TP" if hit else None
+            elif scenario == "BEARISH":
+                hit = current_price <= target_price
+                hit_type = "BEARISH_TP" if hit else None
+            else:  # NEUTRAL
+                hit = price_diff_pct <= 0.5  # Within 0.5% of target
+                hit_type = "NEUTRAL_TP" if hit else None
+        
+        elif target_type == "STOP_LOSS":
+            # Stop loss targets are hit when price moves beyond them
+            if scenario == "BULLISH":
+                hit = current_price <= target_price
+                hit_type = "BULLISH_SL" if hit else None
+            elif scenario == "BEARISH":
+                hit = current_price >= target_price
+                hit_type = "BEARISH_SL" if hit else None
+            else:  # NEUTRAL
+                hit = price_diff_pct <= 0.5  # Within 0.5% of target
+                hit_type = "NEUTRAL_SL" if hit else None
+        
+        elif target_type == "ENTRY":
+            # Entry targets are hit when price is close to them
+            hit = price_diff_pct <= 0.5  # Within 0.5% of target
+            hit_type = "ENTRY" if hit else None
+        
         else:
-            # Neutral: check both directions
-            return abs(current_price - target_price) / target_price < 0.02  # Within 2%
-    
-    elif target_type == "STOP_LOSS":
-        if scenario.upper() in ["BUY", "STRONG BUY", "BULLISH"]:
-            # Bullish scenario: stop loss below entry
-            return current_price <= target_price
-        elif scenario.upper() in ["SELL", "STRONG SELL", "BEARISH"]:
-            # Bearish scenario: stop loss above entry
-            return current_price >= target_price
-        else:
-            # Check if stop loss was hit (either direction)
-            return abs(current_price - target_price) / target_price < 0.01  # Within 1%
-    
-    return False
+            # Default case - consider it hit if within 0.5%
+            hit = price_diff_pct <= 0.5
+            hit_type = "GENERAL" if hit else None
+        
+        return hit, hit_type
+        
+    except Exception as e:
+        print(f"[ERROR] Failed to validate target hit: {e}")
+        return False, None
 
 def extract_professional_targets(prediction_data):
-    """Extract professional analysis targets from the enhanced prediction format"""
-    targets = {"BTC": {}, "ETH": {}}
-    
+    """Extract professional trading targets from prediction data"""
     try:
-        # Check if it's a professional analysis prediction
+        targets = []
+        
+        # Handle professional analysis format
         if isinstance(prediction_data, dict):
-            # Try to find professional analysis targets
             pro_analysis = prediction_data.get("professional_analysis", {})
-            if pro_analysis and "price_targets" in pro_analysis:
-                price_targets = pro_analysis["price_targets"]
-                targets["BTC"] = {
-                    "current": price_targets.get("current"),
-                    "target_1": price_targets.get("target_1"),
-                    "target_2": price_targets.get("target_2"),
-                    "stop_loss": price_targets.get("stop_loss"),
-                    "scenario": pro_analysis.get("primary_scenario", "NEUTRAL")
-                }
+            price_targets = pro_analysis.get("price_targets", {})
+            scenario = pro_analysis.get("primary_scenario", "NEUTRAL")
             
-            # Also check AI prediction format (fallback)
-            if "btc_prediction" in prediction_data:
-                btc_pred = prediction_data["btc_prediction"]
-                targets["BTC"].update({
-                    "entry_range": extract_price_range(btc_pred.get("entry_price_range", "")),
-                    "take_profits": extract_take_profits(btc_pred.get("take_profit_targets", "")),
-                    "stop_loss": extract_price(btc_pred.get("stop_loss", "")),
-                    "direction": btc_pred.get("direction", "")
+            # Extract entry level
+            if "entry" in price_targets:
+                targets.append({
+                    "type": "ENTRY",
+                    "price": price_targets["entry"],
+                    "scenario": scenario
                 })
             
-            if "eth_prediction" in prediction_data:
-                eth_pred = prediction_data["eth_prediction"]
-                targets["ETH"].update({
-                    "entry_range": extract_price_range(eth_pred.get("entry_price_range", "")),
-                    "take_profits": extract_take_profits(eth_pred.get("take_profit_targets", "")),
-                    "stop_loss": extract_price(eth_pred.get("stop_loss", "")),
-                    "direction": eth_pred.get("direction", "")
+            # Extract take profit levels
+            if "take_profits" in price_targets:
+                for i, tp in enumerate(price_targets["take_profits"], 1):
+                    targets.append({
+                        "type": f"TAKE_PROFIT_{i}",
+                        "price": tp,
+                        "scenario": scenario
+                    })
+            
+            # Extract stop loss
+            if "stop_loss" in price_targets:
+                targets.append({
+                    "type": "STOP_LOSS",
+                    "price": price_targets["stop_loss"],
+                    "scenario": scenario
                 })
-                
+        
+        return targets
+        
     except Exception as e:
-        print(f"[ERROR] Extracting professional targets: {e}")
-    
-    return targets
+        print(f"[ERROR] Failed to extract professional targets: {e}")
+        return []
 
 def extract_price_range(price_str):
     """Extract price range from string"""
