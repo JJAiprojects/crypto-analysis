@@ -417,43 +417,48 @@ def validate_predictions():
     # NO LONGER SENDING ENTRY LEVEL HIT NOTIFICATIONS - per user request
     # The old code that sent notifications for latest prediction has been removed
     
-    # Check for scheduled reports based on actual cron timing
+    # Check for scheduled reports based on actual cron timing (UTC timezone)
+    # Vietnam time is UTC+7, so:
+    # 8am Vietnam = 1am UTC
+    # 8pm Vietnam = 1pm UTC (13:00)
     current_hour = datetime.now().hour
     current_minute = datetime.now().minute
     current_weekday = datetime.now().weekday()  # 6 = Sunday
     current_day = datetime.now().day
     
-    # Since cron runs every 30 minutes (:00 and :30), we need to check for the closest times
-    # to 7:45 AM and 7:45 PM which are 8:00 AM and 8:00 PM, or 7:30 AM/PM
-    
-    # Send accuracy report at 8:00 AM/7:30 AM (for 8 PM predictions from previous day)
-    # Send accuracy report at 8:00 PM/7:30 PM (for 8 AM predictions from same day)
+    # Send accuracy report at correct Vietnam times:
+    # 1:00 AM UTC = 8:00 AM Vietnam (analyze 8pm prediction from previous day)
+    # 13:00 PM UTC = 8:00 PM Vietnam (analyze 8am prediction from same day)
     should_send_accuracy_report = (
-        (current_hour == 8 and current_minute == 0) or  # 8:00 AM
-        (current_hour == 7 and current_minute == 30) or  # 7:30 AM  
-        (current_hour == 20 and current_minute == 0) or  # 8:00 PM
-        (current_hour == 19 and current_minute == 30)    # 7:30 PM
+        (current_hour == 1 and current_minute == 0) or   # 8:00 AM Vietnam time
+        (current_hour == 13 and current_minute == 0)     # 8:00 PM Vietnam time
     )
     
     if should_send_accuracy_report:
-        if current_hour in [7, 8]:
+        if current_hour == 1:
             report_type = "8 PM predictions (previous day)"
+            vietnam_time = "8:00 AM"
         else:
-            report_type = "8 AM predictions (same day)"
+            report_type = "8 AM predictions (same day)" 
+            vietnam_time = "8:00 PM"
         
-        print(f"[INFO] Generating daily accuracy report for {report_type}")
+        print(f"[INFO] Generating daily accuracy report for {report_type} at {vietnam_time} Vietnam time")
+        
+        # Get the most recent prediction for detailed analysis
+        last_prediction_analysis = analyze_last_prediction_cycle(predictions, current_hour)
+        
         accuracy_metrics = calculate_enhanced_accuracy(predictions)
-        accuracy_message = format_accuracy_summary(accuracy_metrics)
+        accuracy_message = format_accuracy_summary(accuracy_metrics, last_prediction_analysis)
         send_telegram_message(accuracy_message, is_test=config["test_mode"]["enabled"])
         
         # Also send improvement suggestions to AI
         improvement_data = generate_improvement_suggestions(accuracy_metrics, predictions)
         save_improvement_data(improvement_data)
     
-    # Weekly Deep Learning Analysis - Every Sunday at 8:00 PM or 7:30 PM (closest to 7:45 PM)
+    # Weekly Deep Learning Analysis - Every Sunday at 8:00 PM Vietnam time (13:00 UTC)
     should_send_weekly_report = (
         current_weekday == 6 and 
-        ((current_hour == 20 and current_minute == 0) or (current_hour == 19 and current_minute == 30))
+        current_hour == 13 and current_minute == 0
     )
     
     if should_send_weekly_report:
@@ -466,10 +471,10 @@ def validate_predictions():
         send_telegram_message(weekly_report, is_test=config["test_mode"]["enabled"])
         print("[INFO] Weekly deep learning analysis completed")
     
-    # Monthly Deep Learning Analysis - Every 1st of month at 8:00 PM or 7:30 PM (closest to 7:45 PM)
+    # Monthly Deep Learning Analysis - Every 1st of month at 8:00 PM Vietnam time (13:00 UTC)
     should_send_monthly_report = (
         current_day == 1 and 
-        ((current_hour == 20 and current_minute == 0) or (current_hour == 19 and current_minute == 30))
+        current_hour == 13 and current_minute == 0
     )
     
     if should_send_monthly_report:
@@ -1295,7 +1300,144 @@ def format_notification_message(notification):
     else:
         return f"📊 Validation update: {notification['type']} for {notification['coin']}"
 
-def format_accuracy_summary(metrics):
+def analyze_last_prediction_cycle(predictions, current_hour):
+    """Analyze the most recent prediction cycle (8am or 8pm) for detailed feedback"""
+    if not predictions:
+        return None
+    
+    # Determine which cycle we're analyzing based on current time
+    vietnam_hour = (current_hour + 7) % 24  # Convert UTC to Vietnam time
+    
+    if vietnam_hour == 8:  # 8am Vietnam - analyze 8pm prediction from previous day
+        target_hour = 20  # 8pm
+        target_date = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+    else:  # 8pm Vietnam - analyze 8am prediction from same day
+        target_hour = 8   # 8am
+        target_date = datetime.now().strftime('%Y-%m-%d')
+    
+    # Find the most recent prediction from the target cycle
+    target_predictions = []
+    for pred in predictions:
+        try:
+            timestamp_str = pred["timestamp"]
+            if 'T' in timestamp_str:
+                pred_time = datetime.fromisoformat(timestamp_str.replace('Z', ''))
+            else:
+                pred_time = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
+            
+            # Check if this prediction is from the target cycle
+            if (pred_time.strftime('%Y-%m-%d') == target_date and 
+                abs(pred_time.hour - target_hour) <= 1):  # Allow 1 hour tolerance
+                target_predictions.append(pred)
+        except Exception:
+            continue
+    
+    if not target_predictions:
+        return {
+            "status": "no_prediction_found",
+            "cycle": f"{target_hour}:00 on {target_date}",
+            "message": f"No prediction found for {target_hour}:00 cycle"
+        }
+    
+    # Get the most recent prediction from the target cycle
+    latest_pred = max(target_predictions, key=lambda x: x["timestamp"])
+    
+    # Analyze this prediction
+    analysis = {
+        "status": "found",
+        "cycle": f"{target_hour}:00 on {target_date}",
+        "timestamp": latest_pred["timestamp"],
+        "prediction_summary": {},
+        "outcome_analysis": {},
+        "performance_metrics": {}
+    }
+    
+    # Extract prediction details
+    pro_analysis = latest_pred.get("predictions", {}).get("professional_analysis", {})
+    if pro_analysis:
+        price_targets = pro_analysis.get("price_targets", {})
+        scenario = pro_analysis.get("primary_scenario", "NEUTRAL")
+        confidence = pro_analysis.get("confidence_level", "medium")
+        
+        analysis["prediction_summary"] = {
+            "scenario": scenario,
+            "confidence": confidence,
+            "entry_price": price_targets.get("current", 0),
+            "target_1": price_targets.get("target_1", 0),
+            "target_2": price_targets.get("target_2", 0),
+            "stop_loss": price_targets.get("stop_loss", 0)
+        }
+    
+    # Analyze outcome
+    validation_points = latest_pred.get("validation_points", [])
+    outcome = "PENDING"
+    hit_price = None
+    hit_type = None
+    
+    for vp in validation_points:
+        if vp["type"] in ["PROFESSIONAL_TARGET_1", "PROFESSIONAL_TARGET_2"]:
+            outcome = "TARGET_HIT"
+            hit_price = vp["actual_price"]
+            hit_type = vp["type"].replace("PROFESSIONAL_", "")
+            break
+        elif vp["type"] == "PROFESSIONAL_STOP_LOSS":
+            outcome = "STOP_LOSS_HIT"
+            hit_price = vp["actual_price"]
+            hit_type = "STOP_LOSS"
+            break
+    
+    # Calculate time elapsed
+    try:
+        if 'T' in latest_pred["timestamp"]:
+            pred_time = datetime.fromisoformat(latest_pred["timestamp"].replace('Z', ''))
+        else:
+            pred_time = datetime.strptime(latest_pred["timestamp"], "%Y-%m-%d %H:%M:%S")
+        
+        hours_elapsed = (datetime.now() - pred_time).total_seconds() / 3600
+    except Exception:
+        hours_elapsed = 0
+    
+    analysis["outcome_analysis"] = {
+        "outcome": outcome,
+        "hit_price": hit_price,
+        "hit_type": hit_type,
+        "hours_elapsed": hours_elapsed,
+        "status_message": format_outcome_message(outcome, hit_type, hours_elapsed)
+    }
+    
+    # Calculate R-multiple if possible
+    entry_price = analysis["prediction_summary"].get("entry_price", 0)
+    stop_loss = analysis["prediction_summary"].get("stop_loss", 0)
+    r_multiple = 0
+    
+    if outcome != "PENDING" and entry_price and stop_loss and hit_price:
+        risk = abs(entry_price - stop_loss)
+        if outcome == "TARGET_HIT":
+            reward = abs(hit_price - entry_price)
+            r_multiple = reward / risk if risk > 0 else 0
+        elif outcome == "STOP_LOSS_HIT":
+            r_multiple = -1
+    
+    analysis["performance_metrics"] = {
+        "r_multiple": r_multiple,
+        "result": "WIN" if outcome == "TARGET_HIT" else "LOSS" if outcome == "STOP_LOSS_HIT" else "PENDING"
+    }
+    
+    return analysis
+
+def format_outcome_message(outcome, hit_type, hours_elapsed):
+    """Format a human-readable outcome message"""
+    if outcome == "TARGET_HIT":
+        return f"✅ {hit_type} reached after {hours_elapsed:.1f}h"
+    elif outcome == "STOP_LOSS_HIT":
+        return f"❌ Stop loss hit after {hours_elapsed:.1f}h"
+    else:
+        if hours_elapsed > 24:
+            return f"⏳ Still pending after {hours_elapsed:.1f}h"
+        else:
+            return f"⏳ Active trade ({hours_elapsed:.1f}h elapsed)"
+
+def format_accuracy_summary(metrics, last_prediction_analysis=None):
     """Format enhanced accuracy metrics summary for Telegram - Professional Trader Style"""
     overall_score = (
         metrics.get('win_rate_overall', 0) * 0.4 +
@@ -1303,11 +1445,38 @@ def format_accuracy_summary(metrics):
         min(1, metrics.get('average_rr_ratio', 0) / 2) * 0.3
     ) * 100
 
+    # Get Vietnam time for display
+    utc_time = datetime.now()
+    vietnam_time = utc_time + timedelta(hours=7)
+    
     # Format the comprehensive report
     report = f"📊 <b>PROFESSIONAL TRADING PERFORMANCE</b>\n"
-    report += f"📅 {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
+    report += f"📅 {vietnam_time.strftime('%Y-%m-%d %H:%M')} (Vietnam Time)\n"
     report += f"{'═' * 35}\n\n"
     
+    # Last Prediction Analysis Section
+    if last_prediction_analysis and last_prediction_analysis["status"] == "found":
+        pred_analysis = last_prediction_analysis
+        pred_summary = pred_analysis["prediction_summary"]
+        outcome_analysis = pred_analysis["outcome_analysis"]
+        
+        report += f"🔍 <b>LAST PREDICTION CYCLE</b>\n"
+        report += f"📅 {pred_analysis['cycle']}\n"
+        report += f"🎯 Scenario: {pred_summary.get('scenario', 'N/A')}\n"
+        report += f"💰 Entry: ${pred_summary.get('entry_price', 0):,.0f} → TP: ${pred_summary.get('target_1', 0):,.0f}\n"
+        report += f"🛡️ Stop Loss: ${pred_summary.get('stop_loss', 0):,.0f}\n"
+        report += f"📊 {outcome_analysis['status_message']}\n"
+        
+        if outcome_analysis['outcome'] != 'PENDING':
+            r_multiple = pred_analysis["performance_metrics"]["r_multiple"]
+            result_emoji = "✅" if r_multiple > 0 else "❌"
+            report += f"{result_emoji} Result: {r_multiple:+.2f}R\n"
+        
+        report += "\n"
+    elif last_prediction_analysis and last_prediction_analysis["status"] == "no_prediction_found":
+        report += f"🔍 <b>LAST PREDICTION CYCLE</b>\n"
+        report += f"⚠️ {last_prediction_analysis['message']}\n\n"
+
     # Overall Performance
     report += f"🏆 <b>OVERALL SCORE: {overall_score:.1f}%</b>\n\n"
     
