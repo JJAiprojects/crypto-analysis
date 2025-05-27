@@ -315,6 +315,38 @@ def analyze_last_prediction_cycle(predictions, current_hour):
             "message": str(e)
         }
 
+def format_accuracy_summary(accuracy_metrics, last_prediction_analysis):
+    """Format accuracy metrics into a readable report"""
+    try:
+        report = "📊 <b>Prediction Validation Report</b>\n\n"
+        
+        # Overall metrics
+        report += f"<b>Overall Performance:</b>\n"
+        report += f"• Total Predictions: {accuracy_metrics['total_predictions']}\n"
+        report += f"• Overall Accuracy: {accuracy_metrics['overall_accuracy']:.1f}%\n"
+        report += f"• Average Confidence: {accuracy_metrics['avg_confidence']:.1f}\n\n"
+        
+        # Last prediction analysis
+        if last_prediction_analysis and last_prediction_analysis.get("status") != "error":
+            report += f"<b>Latest Prediction Analysis:</b>\n"
+            
+            for coin in ["BTC", "ETH"]:
+                if coin in last_prediction_analysis["predictions"]:
+                    pred = last_prediction_analysis["predictions"][coin]
+                    acc = last_prediction_analysis["accuracy"][coin]
+                    
+                    report += f"\n<b>{coin}:</b>\n"
+                    report += f"• Direction: {pred['direction']}\n"
+                    report += f"• Confidence: {pred['confidence']}\n"
+                    report += f"• Targets: {pred['targets']}\n"
+                    report += f"• Accuracy: {acc['accuracy_percentage']:.1f}% ({acc['hits']}/{acc['total_targets']})\n"
+        
+        return report
+        
+    except Exception as e:
+        print(f"[ERROR] Failed to format accuracy summary: {e}")
+        return "Error generating accuracy report"
+
 def validate_predictions():
     """Validate the last prediction and generate accuracy report"""
     try:
