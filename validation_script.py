@@ -385,7 +385,7 @@ def validate_predictions():
                 predictions = [
                     p for p in predictions 
                     if not p.get("hourly_validated") and 
-                    (current_time - datetime.fromisoformat(p["timestamp"].replace('Z', '+00:00'))).total_seconds() <= 43200  # 12 hours
+                    (current_time - datetime.fromisoformat(p["timestamp"].replace('Z', '+00:00')).replace(tzinfo=timezone.utc)).total_seconds() <= 43200  # 12 hours
                 ]
         else:
             try:
@@ -397,7 +397,7 @@ def validate_predictions():
                     predictions = [
                         p for p in predictions 
                         if not p.get("hourly_validated") and 
-                        (current_time - datetime.fromisoformat(p["timestamp"].replace('Z', '+00:00'))).total_seconds() <= 43200  # 12 hours
+                        (current_time - datetime.fromisoformat(p["timestamp"].replace('Z', '+00:00')).replace(tzinfo=timezone.utc)).total_seconds() <= 43200  # 12 hours
                     ]
             except Exception as e:
                 print(f"[ERROR] Failed to load predictions: {e}")
@@ -415,7 +415,7 @@ def validate_predictions():
             return
 
         # Get current hour in Vietnam time
-        current_hour = (datetime.now().hour + 7) % 24  # Convert UTC to Vietnam time
+        current_hour = (datetime.now(timezone.utc).hour + 7) % 24  # Convert UTC to Vietnam time
         
         # Analyze the last prediction cycle
         last_prediction_analysis = analyze_last_prediction_cycle(predictions, current_hour)
