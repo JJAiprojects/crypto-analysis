@@ -347,24 +347,66 @@ def format_accuracy_summary(accuracy_metrics, last_prediction_analysis):
         print(f"[ERROR] Failed to format accuracy summary: {e}")
         return "Error generating accuracy report"
 
+def is_validation_window():
+    """Check if current time is within validation window (8am or 8pm Vietnam time)"""
+    try:
+        # Get current UTC time
+        now = datetime.now(timezone.utc)
+        
+        # Convert to Vietnam time (UTC+7)
+        vietnam_time = now + timedelta(hours=7)
+        
+        # Check if it's 8am or 8pm (with 5-minute buffer)
+        hour = vietnam_time.hour
+        minute = vietnam_time.minute
+        
+        # Return True if it's 8am or 8pm (with 5-minute buffer)
+        return (hour == 8 or hour == 20) and minute < 5
+        
+    except Exception as e:
+        print(f"[ERROR] Failed to check validation window: {e}")
+        return False
+
 def validate_predictions():
     """Validate the last prediction and generate accuracy report"""
     try:
+        # Check if we're in a validation window
+        if not is_validation_window():
+            print("[INFO] Not in validation window (8am/8pm Vietnam time) - skipping validation")
+            return
+            
         # Load predictions
         if DATABASE_AVAILABLE:
+            # Get predictions from the last 12 hours that haven't been validated
             predictions = db_manager.load_predictions()
+            if predictions:
+                # Filter predictions that need validation
+                current_time = datetime.now(timezone.utc)
+                predictions = [
+                    p for p in predictions 
+                    if not p.get("hourly_validated") and 
+                    (current_time - datetime.fromisoformat(p["timestamp"].replace('Z', '+00:00'))).total_seconds() <= 43200  # 12 hours
+                ]
         else:
             try:
                 with open("detailed_predictions.json", "r") as f:
                     predictions = json.load(f)
+                if predictions:
+                    # Filter predictions that need validation
+                    current_time = datetime.now(timezone.utc)
+                    predictions = [
+                        p for p in predictions 
+                        if not p.get("hourly_validated") and 
+                        (current_time - datetime.fromisoformat(p["timestamp"].replace('Z', '+00:00'))).total_seconds() <= 43200  # 12 hours
+                    ]
             except Exception as e:
                 print(f"[ERROR] Failed to load predictions: {e}")
                 return
-
+    
         if not predictions:
-            print("[WARN] No predictions found to validate")
+            print("[INFO] No predictions found that need validation")
             return
-
+    
         # Get current prices
         try:
             current_prices = get_crypto_prices()
