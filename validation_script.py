@@ -254,6 +254,67 @@ def load_config():
             print(f"[ERROR] Loading config: {e}")
     return default_config
 
+def analyze_last_prediction_cycle(predictions, current_hour):
+    """Analyze the last prediction cycle for accuracy and performance"""
+    try:
+        if not predictions:
+            return {
+                "status": "no_predictions",
+                "message": "No predictions available for analysis"
+            }
+        
+        # Get the most recent prediction
+        latest_prediction = predictions[-1]
+        
+        # Extract key metrics
+        analysis = {
+            "timestamp": latest_prediction.get("timestamp"),
+            "predictions": {},
+            "accuracy": {},
+            "performance": {}
+        }
+        
+        # Analyze each coin's prediction
+        for coin in ["BTC", "ETH"]:
+            coin_pred = latest_prediction.get("predictions", {}).get(coin, {})
+            if not coin_pred:
+                continue
+                
+            # Get prediction details
+            direction = coin_pred.get("direction", "NEUTRAL")
+            confidence = coin_pred.get("confidence_level", "medium")
+            targets = coin_pred.get("targets", [])
+            
+            # Get validation points
+            validation_points = latest_prediction.get("validation_points", [])
+            coin_validations = [vp for vp in validation_points if vp.get("coin") == coin]
+            
+            # Calculate accuracy metrics
+            hits = sum(1 for vp in coin_validations if vp.get("hit", False))
+            total_targets = len(targets)
+            accuracy = (hits / total_targets * 100) if total_targets > 0 else 0
+            
+            analysis["predictions"][coin] = {
+                "direction": direction,
+                "confidence": confidence,
+                "targets": len(targets)
+            }
+            
+            analysis["accuracy"][coin] = {
+                "hits": hits,
+                "total_targets": total_targets,
+                "accuracy_percentage": accuracy
+            }
+        
+        return analysis
+        
+    except Exception as e:
+        print(f"[ERROR] Failed to analyze last prediction cycle: {e}")
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
 def validate_predictions():
     """Validate the last prediction and generate accuracy report"""
     try:
