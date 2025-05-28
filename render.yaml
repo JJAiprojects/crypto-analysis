@@ -4,6 +4,7 @@ services:
     name: crypto-prediction-system
     env: python
     plan: free
+    runtime: python3
     buildCommand: pip install -r requirements.txt
     startCommand: python 6.py
     envVars:
@@ -25,6 +26,7 @@ services:
     name: crypto-validation-optimal
     env: python
     plan: free
+    runtime: python3
     buildCommand: pip install -r requirements.txt
     schedule: "*/30 * * * *"  # Every 30 minutes for responsive validation
     startCommand: python validation_script.py
@@ -46,6 +48,7 @@ jobs:
   - name: migrate-database
     env: python
     plan: free
+    runtime: python3
     buildCommand: pip install -r requirements.txt
     startCommand: python migrate_db.py
     envVars:
