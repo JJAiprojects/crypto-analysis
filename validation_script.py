@@ -360,16 +360,108 @@ def is_validation_window():
         hour = vietnam_time.hour
         minute = vietnam_time.minute
         
+        print(f"[INFO] Current Vietnam time: {vietnam_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"[INFO] Checking validation window - Hour: {hour}, Minute: {minute}")
+        
         # Return True if it's 8am or 8pm (with 5-minute buffer)
-        return (hour == 8 or hour == 20) and minute < 5
+        is_window = (hour == 8 or hour == 20) and minute < 5
+        if is_window:
+            print("[INFO] In validation window (8am/8pm Vietnam time)")
+        else:
+            print("[INFO] Not in validation window")
+        return is_window
         
     except Exception as e:
         print(f"[ERROR] Failed to check validation window: {e}")
         return False
 
+def validate_prediction(prediction, current_prices):
+    """Validate a single prediction against current prices"""
+    try:
+        validation_result = {
+            "entry_hit": False,
+            "entry_hit_time": None,
+            "tp_hit": False,
+            "tp_hit_time": None,
+            "sl_hit": False,
+            "sl_hit_time": None,
+            "validation_status": "PENDING",
+            "validation_error": None
+        }
+        
+        # Get prediction details
+        predictions_data = prediction.get("predictions_data", {})
+        if not predictions_data:
+            validation_result["validation_status"] = "FAILED"
+            validation_result["validation_error"] = "No prediction data found"
+            return validation_result
+            
+        # Check each coin's prediction
+        for coin in ["BTC", "ETH"]:
+            coin_pred = predictions_data.get(coin, {})
+            if not coin_pred:
+                continue
+                
+            # Get current price
+            current_price = current_prices.get(coin.lower(), None)
+            if not current_price:
+                continue
+                
+            # Get prediction details
+            direction = coin_pred.get("direction", "NEUTRAL")
+            targets = coin_pred.get("targets", [])
+            
+            # Check entry level
+            entry_level = coin_pred.get("entry_level")
+            if entry_level:
+                hit, hit_type = validate_target_hit(current_price, entry_level, "ENTRY", direction)
+                if hit:
+                    validation_result["entry_hit"] = True
+                    validation_result["entry_hit_time"] = datetime.now(timezone.utc)
+            
+            # Check take profit levels
+            tp_levels = [t for t in targets if t.get("type") == "TAKE_PROFIT"]
+            for tp in tp_levels:
+                hit, hit_type = validate_target_hit(current_price, tp.get("price"), "TAKE_PROFIT", direction)
+                if hit:
+                    validation_result["tp_hit"] = True
+                    validation_result["tp_hit_time"] = datetime.now(timezone.utc)
+                    break
+            
+            # Check stop loss level
+            sl_level = coin_pred.get("stop_loss")
+            if sl_level:
+                hit, hit_type = validate_target_hit(current_price, sl_level, "STOP_LOSS", direction)
+                if hit:
+                    validation_result["sl_hit"] = True
+                    validation_result["sl_hit_time"] = datetime.now(timezone.utc)
+        
+        # Determine validation status
+        if validation_result["sl_hit"] and not validation_result["tp_hit"]:
+            validation_result["validation_status"] = "FAILED"
+            validation_result["validation_error"] = "Stop loss hit before take profit"
+        elif validation_result["tp_hit"]:
+            validation_result["validation_status"] = "SUCCESS"
+        elif validation_result["entry_hit"]:
+            validation_result["validation_status"] = "PENDING"  # Still waiting for TP/SL
+        else:
+            validation_result["validation_status"] = "PENDING"  # Waiting for entry
+        
+        return validation_result
+        
+    except Exception as e:
+        print(f"[ERROR] Failed to validate prediction: {e}")
+        return {
+            "validation_status": "FAILED",
+            "validation_error": str(e)
+        }
+
 def validate_predictions():
     """Validate the last prediction and generate accuracy report"""
     try:
+        print("\n=== Starting Validation Run ===")
+        print(f"[INFO] Current UTC time: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}")
+        
         # Check if we're in a validation window
         if not is_validation_window():
             print("[INFO] Not in validation window (8am/8pm Vietnam time) - skipping validation")
@@ -377,9 +469,11 @@ def validate_predictions():
             
         # Load predictions
         if DATABASE_AVAILABLE:
+            print("[INFO] Loading predictions from database...")
             # Get predictions from the last 12 hours that haven't been validated
             predictions = db_manager.load_predictions()
             if predictions:
+                print(f"[INFO] Found {len(predictions)} total predictions")
                 # Filter predictions that need validation
                 current_time = datetime.now(timezone.utc)
                 predictions = [
@@ -387,11 +481,14 @@ def validate_predictions():
                     if not p.get("hourly_validated") and 
                     (current_time - datetime.fromisoformat(p["timestamp"].replace('Z', '+00:00')).replace(tzinfo=timezone.utc)).total_seconds() <= 43200  # 12 hours
                 ]
+                print(f"[INFO] {len(predictions)} predictions need validation")
         else:
             try:
+                print("[INFO] Loading predictions from JSON file...")
                 with open("detailed_predictions.json", "r") as f:
                     predictions = json.load(f)
                 if predictions:
+                    print(f"[INFO] Found {len(predictions)} total predictions")
                     # Filter predictions that need validation
                     current_time = datetime.now(timezone.utc)
                     predictions = [
@@ -399,6 +496,7 @@ def validate_predictions():
                         if not p.get("hourly_validated") and 
                         (current_time - datetime.fromisoformat(p["timestamp"].replace('Z', '+00:00')).replace(tzinfo=timezone.utc)).total_seconds() <= 43200  # 12 hours
                     ]
+                    print(f"[INFO] {len(predictions)} predictions need validation")
             except Exception as e:
                 print(f"[ERROR] Failed to load predictions: {e}")
                 return
@@ -409,37 +507,82 @@ def validate_predictions():
     
         # Get current prices
         try:
+            print("[INFO] Getting current prices...")
             current_prices = get_crypto_prices()
+            print(f"[INFO] Current prices: BTC=${current_prices['btc']:,.2f}, ETH=${current_prices['eth']:,.2f}")
         except Exception as e:
             print(f"[ERROR] Failed to get current prices: {e}")
             return
 
-        # Get current hour in Vietnam time
-        current_hour = (datetime.now(timezone.utc).hour + 7) % 24  # Convert UTC to Vietnam time
+        # Validate each prediction
+        for prediction in predictions:
+            print(f"[INFO] Validating prediction from {prediction.get('timestamp')}...")
+            validation_result = validate_prediction(prediction, current_prices)
+            
+            # Update prediction with validation results
+            prediction.update(validation_result)
+            
+            # Save updated prediction
+            if DATABASE_AVAILABLE:
+                db_manager.save_prediction(prediction)
+            else:
+                with open("detailed_predictions.json", "w") as f:
+                    json.dump(predictions, f, indent=4, default=str)
         
-        # Analyze the last prediction cycle
-        last_prediction_analysis = analyze_last_prediction_cycle(predictions, current_hour)
-        
-        # Calculate overall accuracy metrics
-        accuracy_metrics = calculate_enhanced_accuracy(predictions)
-        
-        # Format and send the accuracy report
-        report = format_accuracy_summary(accuracy_metrics, last_prediction_analysis)
+        # Generate and send report
+        print("[INFO] Generating validation report...")
+        report = format_validation_report(predictions)
         send_telegram_message(report)
         
-        # Save predictions for learning
-        if DATABASE_AVAILABLE:
-            for prediction in predictions:
-                if not prediction.get("ml_processed"):
-                    db_manager.save_prediction(prediction)
-                    prediction["ml_processed"] = True
-        else:
-            with open("detailed_predictions.json", "w") as f:
-                json.dump(predictions, f, indent=4, default=str)
+        print("=== Validation Run Completed ===\n")
 
     except Exception as e:
         print(f"[ERROR] Validation failed: {e}")
         return
+
+def format_validation_report(predictions):
+    """Format validation results into a readable report"""
+    try:
+        report = "📊 <b>Prediction Validation Report</b>\n\n"
+        
+        # Overall metrics
+        total_predictions = len(predictions)
+        successful = sum(1 for p in predictions if p.get("validation_status") == "SUCCESS")
+        failed = sum(1 for p in predictions if p.get("validation_status") == "FAILED")
+        pending = sum(1 for p in predictions if p.get("validation_status") == "PENDING")
+        
+        report += f"<b>Overall Performance:</b>\n"
+        report += f"• Total Predictions: {total_predictions}\n"
+        report += f"• Successful: {successful}\n"
+        report += f"• Failed: {failed}\n"
+        report += f"• Pending: {pending}\n"
+        
+        if total_predictions > 0:
+            accuracy = (successful / total_predictions) * 100
+            report += f"• Accuracy: {accuracy:.1f}%\n\n"
+        
+        # Latest prediction details
+        if predictions:
+            latest = predictions[-1]
+            report += f"<b>Latest Prediction:</b>\n"
+            report += f"• Time: {latest.get('timestamp')}\n"
+            report += f"• Status: {latest.get('validation_status')}\n"
+            
+            if latest.get("validation_status") == "FAILED":
+                report += f"• Error: {latest.get('validation_error')}\n"
+            
+            if latest.get("entry_hit"):
+                report += f"• Entry Hit: Yes (at {latest.get('entry_hit_time')})\n"
+            if latest.get("tp_hit"):
+                report += f"• Take Profit Hit: Yes (at {latest.get('tp_hit_time')})\n"
+            if latest.get("sl_hit"):
+                report += f"• Stop Loss Hit: Yes (at {latest.get('sl_hit_time')})\n"
+        
+        return report
+        
+    except Exception as e:
+        print(f"[ERROR] Failed to format validation report: {e}")
+        return "Error generating validation report"
 
 def validate_professional_targets(prediction, coin, targets, current_price, is_latest, notifications):
     """Validate professional trading targets"""

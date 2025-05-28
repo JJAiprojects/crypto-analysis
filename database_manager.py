@@ -45,6 +45,16 @@ class PredictionRecord(Base):
     # Enhanced fields for validation learning
     trade_metrics = Column(JSON)
     risk_analysis = Column(JSON)
+    
+    # New fields for detailed validation
+    entry_hit = Column(Boolean, default=False)
+    entry_hit_time = Column(DateTime)
+    tp_hit = Column(Boolean, default=False)
+    tp_hit_time = Column(DateTime)
+    sl_hit = Column(Boolean, default=False)
+    sl_hit_time = Column(DateTime)
+    validation_status = Column(String(20), default="PENDING")  # PENDING, SUCCESS, FAILED
+    validation_error = Column(String(200))  # Store specific error if validation failed
 
 class LearningInsight(Base):
     __tablename__ = 'learning_insights'
@@ -155,7 +165,15 @@ class DatabaseManager:
                 hourly_validated=prediction_data.get('hourly_validated', False),
                 last_validation=datetime.fromisoformat(prediction_data.get('last_validation').replace('Z', '+00:00')) if prediction_data.get('last_validation') else None,
                 trade_metrics=prediction_data.get('trade_metrics'),
-                risk_analysis=prediction_data.get('risk_analysis')
+                risk_analysis=prediction_data.get('risk_analysis'),
+                entry_hit=prediction_data.get('entry_hit', False),
+                entry_hit_time=datetime.fromisoformat(prediction_data.get('entry_hit_time').replace('Z', '+00:00')) if prediction_data.get('entry_hit_time') else None,
+                tp_hit=prediction_data.get('tp_hit', False),
+                tp_hit_time=datetime.fromisoformat(prediction_data.get('tp_hit_time').replace('Z', '+00:00')) if prediction_data.get('tp_hit_time') else None,
+                sl_hit=prediction_data.get('sl_hit', False),
+                sl_hit_time=datetime.fromisoformat(prediction_data.get('sl_hit_time').replace('Z', '+00:00')) if prediction_data.get('sl_hit_time') else None,
+                validation_status=prediction_data.get('validation_status', "PENDING"),
+                validation_error=prediction_data.get('validation_error', "")
             )
             
             session.add(record)
@@ -232,7 +250,15 @@ class DatabaseManager:
                     'hourly_validated': record.hourly_validated,
                     'last_validation': record.last_validation.isoformat() if record.last_validation else None,
                     'trade_metrics': record.trade_metrics,
-                    'risk_analysis': record.risk_analysis
+                    'risk_analysis': record.risk_analysis,
+                    'entry_hit': record.entry_hit,
+                    'entry_hit_time': record.entry_hit_time.isoformat() if record.entry_hit_time else None,
+                    'tp_hit': record.tp_hit,
+                    'tp_hit_time': record.tp_hit_time.isoformat() if record.tp_hit_time else None,
+                    'sl_hit': record.sl_hit,
+                    'sl_hit_time': record.sl_hit_time.isoformat() if record.sl_hit_time else None,
+                    'validation_status': record.validation_status,
+                    'validation_error': record.validation_error
                 }
                 predictions.append(prediction)
             

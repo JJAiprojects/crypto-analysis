@@ -1295,123 +1295,123 @@ def save_prediction(prediction, data):
 
 def save_detailed_prediction(prediction_data, market_data):
     """Save structured prediction with detailed metrics and risk analysis"""
-    # Load config first
-    config = load_config()
-    
-    # Use test file if in test mode
-    prediction_file = "detailed_predictions.json"
-    if config["test_mode"]["enabled"]:
-        prediction_file = config["test_mode"]["output_prefix"] + prediction_file
-        print(f"[TEST] Using test prediction file: {prediction_file}")
-    
-
-    today = datetime.now().strftime("%Y-%m-%d")
-    current_hour = datetime.now().hour
-    session = "morning" if current_hour < 15 else "evening"
-    
-    # Get professional trader analysis
-    pro_analysis = {}
     try:
-        pro_analysis = professional_trader.generate_probabilistic_forecast(market_data)
-        print(f"[INFO] Professional analysis completed: {pro_analysis.get('primary_scenario', 'Unknown')} scenario")
-    except Exception as e:
-        print(f"[ERROR] Professional analysis failed: {e}")
-    
-    # Get ML predictions if enabled
-    ml_predictions = {}
-    if config["ml"]["enabled"]:
-        try:
-            ml_predictions = ml_enhancer.predict(market_data)
-        except Exception as e:
-            print(f"[ERROR] ML prediction failed: {e}")
-    
-    # Get risk analysis if enabled
-    risk_analysis = {}
-    if config["risk"]["enabled"] and ml_predictions:
-        try:
-            # Update risk metrics
-            prediction_confidence = ml_predictions.get('direction', {}).get('confidence', 0.5)
-            risk_manager.update_risk_metrics(market_data, prediction_confidence)
-            
-            # Calculate position size
-            position_size = risk_manager.calculate_position_size(
-                config["risk"]["account_size"],
-                config["risk"]["max_risk_per_trade"]
-            )
-            
-            # Calculate stop loss and take profit levels
-            if 'btc_price' in market_data:
-                entry_price = market_data['btc_price']
-                direction = 'long' if ml_predictions.get('direction', {}).get('prediction') == 'rally' else 'short'
-                
-                stop_loss = risk_manager.calculate_stop_loss(entry_price, direction)
-                take_profit = risk_manager.calculate_take_profit(
-                    entry_price,
-                    direction,
-                    config["risk"]["risk_reward_ratio"]
-                )
-            
-            risk_analysis = risk_manager.get_risk_summary()
-        except Exception as e:
-            print(f"[ERROR] Risk analysis failed: {e}")
-    
-    # Extract fear & greed index from dictionary
-    fear_greed_data = market_data.get("fear_greed", {})
-    fear_greed_index = fear_greed_data.get("index") if isinstance(fear_greed_data, dict) else fear_greed_data
-    
-    # Create a structured prediction record
-    prediction_record = {
-        "date": today,
-        "session": session,
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "market_data": {
-            "btc_price": float(market_data.get("btc_price")) if pd.notna(market_data.get("btc_price")) else None,
-            "eth_price": float(market_data.get("eth_price")) if pd.notna(market_data.get("eth_price")) else None,
-            "btc_rsi": float(market_data.get("btc_rsi")) if pd.notna(market_data.get("btc_rsi")) else None,
-            "eth_rsi": float(market_data.get("eth_rsi")) if pd.notna(market_data.get("eth_rsi")) else None,
-            "fear_greed": int(fear_greed_index) if pd.notna(fear_greed_index) else None,
-        },
-        "predictions": {
-            "ai_prediction": prediction_data,
-            "professional_analysis": pro_analysis,
-            "ml_predictions": ml_predictions
-        },
-        "risk_analysis": risk_analysis,
-        "validation_points": [],
-        "final_accuracy": None
-    }
-    
-    # Try to save to database first, fallback to JSON
-    success = False
-    if DATABASE_AVAILABLE:
-        try:
-            success = db_manager.save_prediction(prediction_record)
-            if success:
-                print(f"[INFO] Detailed prediction saved to database for {today} ({session})")
-        except Exception as e:
-            print(f"[ERROR] Database save failed: {e}")
-    
-    # Fallback to JSON file if database failed or not available
-    if not success:
-        # Load existing predictions
-        predictions = []
-        if os.path.exists(prediction_file):
+        # Get current date and time
+        today = datetime.now().strftime("%Y-%m-%d")
+        current_hour = datetime.now().hour
+        session = "morning" if current_hour < 15 else "evening"
+        
+        # Get fear & greed index
+        fear_greed_index = market_data.get("fear_greed", 50)
+        
+        # Get professional analysis
+        pro_analysis = analyze_market_conditions(market_data)
+        
+        # Get ML predictions
+        ml_predictions = get_ml_predictions(market_data)
+        
+        # Calculate risk analysis
+        risk_analysis = calculate_risk_metrics(market_data, prediction_data)
+        
+        # Create a structured prediction record
+        prediction_record = {
+            "date": today,
+            "session": session,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "market_data": {
+                "btc_price": float(market_data.get("btc_price")) if pd.notna(market_data.get("btc_price")) else None,
+                "eth_price": float(market_data.get("eth_price")) if pd.notna(market_data.get("eth_price")) else None,
+                "btc_rsi": float(market_data.get("btc_rsi")) if pd.notna(market_data.get("btc_rsi")) else None,
+                "eth_rsi": float(market_data.get("eth_rsi")) if pd.notna(market_data.get("eth_rsi")) else None,
+                "fear_greed": int(fear_greed_index) if pd.notna(fear_greed_index) else None,
+            },
+            "predictions_data": {
+                "BTC": {
+                    "direction": prediction_data.get("btc_direction", "NEUTRAL"),
+                    "confidence_level": prediction_data.get("btc_confidence", "medium"),
+                    "entry_level": prediction_data.get("btc_entry"),
+                    "stop_loss": prediction_data.get("btc_sl"),
+                    "targets": [
+                        {
+                            "type": "TAKE_PROFIT",
+                            "price": prediction_data.get("btc_tp1"),
+                            "percentage": prediction_data.get("btc_tp1_pct")
+                        },
+                        {
+                            "type": "TAKE_PROFIT",
+                            "price": prediction_data.get("btc_tp2"),
+                            "percentage": prediction_data.get("btc_tp2_pct")
+                        }
+                    ]
+                },
+                "ETH": {
+                    "direction": prediction_data.get("eth_direction", "NEUTRAL"),
+                    "confidence_level": prediction_data.get("eth_confidence", "medium"),
+                    "entry_level": prediction_data.get("eth_entry"),
+                    "stop_loss": prediction_data.get("eth_sl"),
+                    "targets": [
+                        {
+                            "type": "TAKE_PROFIT",
+                            "price": prediction_data.get("eth_tp1"),
+                            "percentage": prediction_data.get("eth_tp1_pct")
+                        },
+                        {
+                            "type": "TAKE_PROFIT",
+                            "price": prediction_data.get("eth_tp2"),
+                            "percentage": prediction_data.get("eth_tp2_pct")
+                        }
+                    ]
+                }
+            },
+            "risk_analysis": risk_analysis,
+            "validation_points": [],
+            "final_accuracy": None,
+            "entry_hit": False,
+            "entry_hit_time": None,
+            "tp_hit": False,
+            "tp_hit_time": None,
+            "sl_hit": False,
+            "sl_hit_time": None,
+            "validation_status": "PENDING",
+            "validation_error": None
+        }
+        
+        # Try to save to database first, fallback to JSON
+        success = False
+        if DATABASE_AVAILABLE:
             try:
-                with open(prediction_file, "r") as f:
-                    predictions = json.load(f)
+                success = db_manager.save_prediction(prediction_record)
+                if success:
+                    print(f"[INFO] Detailed prediction saved to database for {today} ({session})")
             except Exception as e:
-                print(f"[ERROR] Loading detailed prediction history: {e}")
+                print(f"[ERROR] Database save failed: {e}")
         
-        # Add new prediction
-        predictions.append(prediction_record)
-        
-        # Save predictions
-        try:
-            with open(prediction_file, "w") as f:
-                json.dump(predictions, f, indent=4)
-            print(f"[INFO] Detailed prediction saved to {prediction_file} for {today} ({session})")
-        except Exception as e:
-            print(f"[ERROR] Saving detailed prediction: {e}")
+        # Fallback to JSON file if database failed or not available
+        if not success:
+            # Load existing predictions
+            predictions = []
+            if os.path.exists(prediction_file):
+                try:
+                    with open(prediction_file, "r") as f:
+                        predictions = json.load(f)
+                except Exception as e:
+                    print(f"[ERROR] Loading detailed prediction history: {e}")
+            
+            # Add new prediction
+            predictions.append(prediction_record)
+            
+            # Save predictions
+            try:
+                with open(prediction_file, "w") as f:
+                    json.dump(predictions, f, indent=4)
+                print(f"[INFO] Detailed prediction saved to {prediction_file} for {today} ({session})")
+            except Exception as e:
+                print(f"[ERROR] Saving detailed prediction: {e}")
+                
+    except Exception as e:
+        print(f"[ERROR] Failed to save detailed prediction: {e}")
+        import traceback
+        traceback.print_exc()
 
 def get_prediction_accuracy():
     """Compare previous predictions with actual outcomes"""
