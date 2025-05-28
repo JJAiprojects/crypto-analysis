@@ -3,6 +3,7 @@ services:
   - type: web
     name: crypto-prediction-system
     env: python
+    plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: python 6.py
     envVars:
@@ -23,6 +24,7 @@ services:
   - type: cron
     name: crypto-validation-optimal
     env: python
+    plan: free
     buildCommand: pip install -r requirements.txt
     schedule: "*/30 * * * *"  # Every 30 minutes for responsive validation
     startCommand: python validation_script.py
