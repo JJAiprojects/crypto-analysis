@@ -15,6 +15,14 @@ from telegram_utils import send_telegram_message, TelegramBot
 from ml_enhancer import PredictionEnhancer
 from risk_manager import RiskManager
 from professional_analysis import ProfessionalTraderAnalysis
+from flask import Flask, jsonify
+
+# Initialize Flask app
+app = Flask(__name__)
+
+@app.route('/health')
+def health_check():
+    return jsonify({"status": "healthy", "timestamp": datetime.now(timezone.utc).isoformat()})
 
 # Optional dotenv import for local development
 try:
@@ -2148,4 +2156,11 @@ if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--test":
         config["test_mode"]["enabled"] = True
         print("[TEST] Test mode enabled")
+    
+    # Start Flask app in a separate thread
+    from threading import Thread
+    flask_thread = Thread(target=lambda: app.run(host='0.0.0.0', port=int(os.getenv('PORT', 8080))))
+    flask_thread.daemon = True
+    flask_thread.start()
+    
     main()
