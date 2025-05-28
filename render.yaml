@@ -43,6 +43,7 @@ services:
 jobs:
   - name: migrate-database
     env: python
+    plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: python migrate_db.py
     envVars:
