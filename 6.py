@@ -1551,114 +1551,61 @@ def get_prediction_accuracy():
 # 6. GPT Market Insight
 # ----------------------------
 def ask_ai(market_data):
-    # First check for environment variable, then fallback to config file
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
-        api_key = config["api_keys"]["openai"]
-    
-    if not api_key or api_key == "YOUR_OPENAI_API_KEY":
-        return "AI summary unavailable. Please add your OpenAI API key to config.json or set the OPENAI_API_KEY environment variable."
-    
-    # Generate professional trader analysis
-    print("\n[INFO] Running professional trader analysis...")
-    pro_analysis = professional_trader.generate_probabilistic_forecast(market_data)
-    
-    if "error" in pro_analysis:
-        return f"Professional analysis unavailable: {pro_analysis['error']}"
-    
-    # Determine if this is a morning or evening prediction
-    current_hour = datetime.now().hour
-    session = "morning" if current_hour < 15 else "evening"
-    timeframe = "next 12 hours" if session == "morning" else "overnight and early morning"
-    
-    # Create detailed market context for AI
-    btc_data = market_data.get('technical_indicators', {}).get('BTC', {})
-    fear_greed = market_data.get('fear_greed', {})
-    futures = market_data.get('futures', {}).get('BTC', {})
-    
-    # Enhanced prompt with professional analysis
-    enhanced_prompt = f"""You are a professional cryptocurrency trader with 10+ years of experience. Analyze the following comprehensive market data and provide a detailed 12-hour forecast for BTC.
-
-=== PROFESSIONAL ANALYSIS SUMMARY ===
-Primary Scenario: {pro_analysis['primary_scenario'].upper()} ({pro_analysis['confidence_level']} confidence)
-Bullish Probability: {pro_analysis['bullish_probability']}%
-Bearish Probability: {pro_analysis['bearish_probability']}%
-
-Current Price: ${pro_analysis['price_targets']['current']:,.0f}
-Target 1: ${pro_analysis['price_targets']['target_1']:,.0f}
-Target 2: ${pro_analysis['price_targets']['target_2']:,.0f}
-Stop Loss: ${pro_analysis['price_targets']['stop_loss']:,.0f}
-Expected Move: ${pro_analysis['price_targets']['expected_move']:,.0f}
-
-=== COMPONENT ANALYSIS ===
-Price Action Score: {pro_analysis['component_scores']['price_action']:.2f}
-Volume Flow Score: {pro_analysis['component_scores']['volume_flow']:.2f}
-Volatility Score: {pro_analysis['component_scores']['volatility']:.2f}
-Momentum Score: {pro_analysis['component_scores']['momentum']:.2f}
-Funding/Sentiment Score: {pro_analysis['component_scores']['funding_sentiment']:.2f}
-Macro Context Score: {pro_analysis['component_scores']['macro_context']:.2f}
-
-Strongest Signal: {pro_analysis['key_factors']['strongest_signal'][0]} ({pro_analysis['key_factors']['strongest_signal'][1]:.2f})
-Volatility Regime: {pro_analysis['risk_assessment']['volatility_regime']}
-
-=== DETAILED MARKET DATA ===
-BTC Price: ${btc_data.get('price', 0):,.0f}
-Support: ${btc_data.get('support', 0):,.0f}
-Resistance: ${btc_data.get('resistance', 0):,.0f}
-RSI: {btc_data.get('rsi14', 0):.1f}
-Trend: {btc_data.get('trend', 'unknown')}
-ATR: ${btc_data.get('atr', 0):,.0f}
-
-Funding Rate: {futures.get('funding_rate', 0)*100:.3f}%
-Open Interest: ${futures.get('open_interest', 0):,.0f}
-Long/Short Ratio: {futures.get('long_ratio', 0):.2f}/{futures.get('short_ratio', 0):.2f}
-
-Fear & Greed Index: {fear_greed.get('index', 50) if isinstance(fear_greed, dict) else 50}
-BTC Dominance: {market_data.get('btc_dominance', 0):.1f}%
-
-=== YOUR TASK ===
-As a professional trader, provide your analysis for the {timeframe} in this structure:
-
-**EXECUTIVE SUMMARY**
-- Primary thesis and confidence level
-- Key risk factors to monitor
-
-**TECHNICAL ANALYSIS**
-- Market structure assessment
-- Key levels and price action
-- Volume analysis
-
-**SENTIMENT & POSITIONING**
-- Funding rate implications
-- Fear/greed assessment
-- Crowd positioning
-
-**TRADING PLAN**
-- Entry strategy and levels
-- Take profit targets with rationale
-- Stop loss placement
-- Position sizing recommendation
-- Risk/reward analysis
-
-**SCENARIO PLANNING**
-- Primary scenario (probability)
-- Alternative scenario (probability)
-- Invalidation levels
-
-Keep your analysis concise, professional, and actionable. Focus on the highest probability outcomes based on the data convergence."""
-        
+    """Get AI prediction with enhanced prompt"""
     try:
-        client = OpenAI(api_key=api_key)
-        response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[{"role": "user", "content": enhanced_prompt}],
-            temperature=0.3,  # Lower temperature for more focused analysis
-            max_tokens=1500   # Allow for detailed response
-        )
-        return response.choices[0].message.content
+        # Ensure all required fields have default values if None
+        market_data = {
+            "btc_price": market_data.get("btc_price", 0),
+            "eth_price": market_data.get("eth_price", 0),
+            "btc_rsi": market_data.get("btc_rsi", 50),
+            "eth_rsi": market_data.get("eth_rsi", 50),
+            "fear_greed": market_data.get("fear_greed", {}).get("index", 50),
+            "btc_trend": market_data.get("btc_trend", "neutral"),
+            "eth_trend": market_data.get("eth_trend", "neutral"),
+            "btc_signal": market_data.get("btc_signal", "NEUTRAL"),
+            "eth_signal": market_data.get("eth_signal", "NEUTRAL"),
+            "btc_support": market_data.get("btc_support", 0),
+            "btc_resistance": market_data.get("btc_resistance", 0),
+            "eth_support": market_data.get("eth_support", 0),
+            "eth_resistance": market_data.get("eth_resistance", 0),
+            "btc_signal_confidence": market_data.get("btc_signal_confidence", 0),
+            "eth_signal_confidence": market_data.get("eth_signal_confidence", 0)
+        }
+        
+        enhanced_prompt = f"""You are a professional cryptocurrency trader with 10+ years of experience. Analyze the following comprehensive market data and provide a detailed 12-hour forecast for BTC.
+
+Current Market Data:
+- BTC Price: ${market_data['btc_price']:,.2f}
+- ETH Price: ${market_data['eth_price']:,.2f}
+- BTC RSI: {market_data['btc_rsi']:.1f}
+- ETH RSI: {market_data['eth_rsi']:.1f}
+- Fear & Greed Index: {market_data['fear_greed']}
+- BTC Trend: {market_data['btc_trend']}
+- ETH Trend: {market_data['eth_trend']}
+- BTC Signal: {market_data['btc_signal']} (Confidence: {market_data['btc_signal_confidence']}/10)
+- ETH Signal: {market_data['eth_signal']} (Confidence: {market_data['eth_signal_confidence']}/10)
+- BTC Support: ${market_data['btc_support']:,.2f}
+- BTC Resistance: ${market_data['btc_resistance']:,.2f}
+- ETH Support: ${market_data['eth_support']:,.2f}
+- ETH Resistance: ${market_data['eth_resistance']:,.2f}
+
+Please provide:
+1. A clear trading direction (BUY/SELL/NEUTRAL)
+2. Entry price range
+3. Two take profit targets with percentages
+4. Stop loss level
+5. Brief explanation of your analysis
+6. Risk level (1-10)
+
+Format your response in a clear, structured way."""
+
+        # Get AI prediction
+        response = get_ai_prediction(enhanced_prompt)
+        return response
+
     except Exception as e:
-        print(f"[ERROR] GPT call failed: {e}")
-        return f"AI summary unavailable: {str(e)}"
+        print(f"[ERROR] Failed to get AI prediction: {e}")
+        return None
 
 def train_ml_models():
     """Train machine learning models on historical data"""

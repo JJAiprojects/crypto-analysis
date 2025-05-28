@@ -56,6 +56,18 @@ class PredictionRecord(Base):
     validation_status = Column(String(20), default="PENDING")  # PENDING, SUCCESS, FAILED
     validation_error = Column(String(200))  # Store specific error if validation failed
 
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        # Initialize default values for new fields
+        self.entry_hit = kwargs.get('entry_hit', False)
+        self.entry_hit_time = kwargs.get('entry_hit_time')
+        self.tp_hit = kwargs.get('tp_hit', False)
+        self.tp_hit_time = kwargs.get('tp_hit_time')
+        self.sl_hit = kwargs.get('sl_hit', False)
+        self.sl_hit_time = kwargs.get('sl_hit_time')
+        self.validation_status = kwargs.get('validation_status', "PENDING")
+        self.validation_error = kwargs.get('validation_error', "")
+
 class LearningInsight(Base):
     __tablename__ = 'learning_insights'
     
