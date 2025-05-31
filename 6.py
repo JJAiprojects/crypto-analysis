@@ -613,7 +613,8 @@ def main():
 # Flask web service for render.com deployment
 if __name__ == "__main__":
     # Check if running as web service (render.com)
-    if os.getenv('RENDER') or os.getenv('PORT'):
+    # Only start Flask if PORT is set (web service), not just RENDER (which is set for cron jobs too)
+    if os.getenv('PORT') and not os.getenv('IS_CRON_JOB'):
         print("🌐 Starting web service mode for render.com...")
         from flask import Flask, jsonify
         
@@ -651,5 +652,6 @@ if __name__ == "__main__":
         port = int(os.getenv('PORT', 5000))
         app.run(host='0.0.0.0', port=port)
     else:
-        # Run as CLI application
+        # Run as CLI application (includes cron jobs)
+        print("🕐 Running as scheduled cron job..." if os.getenv('RENDER') else "💻 Running as CLI application...")
         main() 
