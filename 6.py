@@ -532,7 +532,9 @@ def inspect_data_storage():
                     # New simplified format
                     print(f"   {i}. {pred.get('date', 'N/A')} {pred.get('time', 'N/A')} | {pred.get('method', 'N/A').upper()}")
                     print(f"      Entry: ${pred.get('entry_level', 0):,.2f} | SL: ${pred.get('stop_loss', 0):,.2f} | TP: ${pred.get('take_profit', 0):,.2f}")
-                    print(f"      Confidence: {pred.get('confidence', 0):.1f}% | Accuracy: {'Pending' if pred.get('accuracy') is None else f'{pred.get('accuracy'):.1f}%'}")
+                    # Fix f-string syntax error by extracting accuracy value first
+                    accuracy_display = 'Pending' if pred.get('accuracy') is None else f"{pred.get('accuracy'):.1f}%"
+                    print(f"      Confidence: {pred.get('confidence', 0):.1f}% | Accuracy: {accuracy_display}")
                     print(f"      Notes: {pred.get('notes', 'N/A')[:50]}...")
                 else:
                     # Legacy format
