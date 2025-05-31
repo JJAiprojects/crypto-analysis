@@ -2,11 +2,12 @@ services:
   # Main prediction script (existing web service)
   - type: web
     name: crypto-prediction-system
-    env: python
+    env: python3
     plan: free
     runtime: python3
     buildCommand: pip install -r requirements.txt
     startCommand: python 6.py
+    healthCheckPath: /health
     envVars:
       - key: OPENAI_API_KEY
         sync: false
@@ -24,7 +25,7 @@ services:
   # Optimal validation cron job - handles all validation and reporting
   - type: cron
     name: crypto-validation-optimal
-    env: python
+    env: python3
     plan: free
     runtime: python3
     buildCommand: pip install -r requirements.txt
@@ -46,7 +47,7 @@ services:
 
 jobs:
   - name: migrate-database
-    env: python
+    env: python3
     plan: free
     runtime: python3
     buildCommand: pip install -r requirements.txt

@@ -1,7 +1,7 @@
 import os
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any
 from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Float, Boolean, JSON
 from sqlalchemy.ext.declarative import declarative_base
@@ -19,54 +19,31 @@ class PredictionRecord(Base):
     __tablename__ = 'predictions'
     
     id = Column(Integer, primary_key=True)
-    date = Column(String(20), nullable=False)
-    session = Column(String(20), nullable=False)
+    
+    # Basic info
+    date = Column(String(20), nullable=False)  # 2025-05-30
+    time = Column(String(20), nullable=False)  # 10:30
     timestamp = Column(DateTime, nullable=False)
     
-    # Market data
-    btc_price = Column(Float)
-    eth_price = Column(Float)
-    btc_rsi = Column(Float)
-    eth_rsi = Column(Float)
-    fear_greed = Column(Integer)
+    # Prediction method
+    method = Column(String(20), nullable=False)  # 'ai' or 'calculation'
     
-    # Predictions (stored as JSON)
-    predictions_data = Column(JSON, nullable=False)
+    # Core prediction data
+    entry_level = Column(Float, nullable=False)   # Entry price
+    stop_loss = Column(Float, nullable=False)     # SL price
+    take_profit = Column(Float, nullable=False)   # TP price
+    confidence = Column(Float, nullable=False)    # Confidence 0-100
     
-    # Validation data
-    validation_points = Column(JSON, default=list)
-    final_accuracy = Column(Float)
+    # Validation field (filled later)
+    accuracy = Column(Float, nullable=True)       # Actual accuracy result (empty initially)
     
-    # Processing flags
-    ml_processed = Column(Boolean, default=False)
-    hourly_validated = Column(Boolean, default=False)
-    last_validation = Column(DateTime)
+    # Optional metadata
+    coin = Column(String(10), default='BTC')      # BTC or ETH
+    notes = Column(String(500), nullable=True)    # Optional notes
     
-    # Enhanced fields for validation learning
-    trade_metrics = Column(JSON)
-    risk_analysis = Column(JSON)
-    
-    # New fields for detailed validation
-    entry_hit = Column(Boolean, default=False)
-    entry_hit_time = Column(DateTime)
-    tp_hit = Column(Boolean, default=False)
-    tp_hit_time = Column(DateTime)
-    sl_hit = Column(Boolean, default=False)
-    sl_hit_time = Column(DateTime)
-    validation_status = Column(String(20), default="PENDING")  # PENDING, SUCCESS, FAILED
-    validation_error = Column(String(200))  # Store specific error if validation failed
-
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        # Initialize default values for new fields
-        self.entry_hit = kwargs.get('entry_hit', False)
-        self.entry_hit_time = kwargs.get('entry_hit_time')
-        self.tp_hit = kwargs.get('tp_hit', False)
-        self.tp_hit_time = kwargs.get('tp_hit_time')
-        self.sl_hit = kwargs.get('sl_hit', False)
-        self.sl_hit_time = kwargs.get('sl_hit_time')
-        self.validation_status = kwargs.get('validation_status', "PENDING")
-        self.validation_error = kwargs.get('validation_error', "")
+    # Timestamps for tracking
+    created_at = Column(DateTime, default=datetime.utcnow)
+    validated_at = Column(DateTime, nullable=True)
 
 class LearningInsight(Base):
     __tablename__ = 'learning_insights'
@@ -93,6 +70,53 @@ class DatabaseManager:
         self.Session = None
         self.use_database = False
         self.initialize_database()
+    
+    def _migrate_sqlite_schema(self):
+        """Migrate SQLite schema to add missing columns"""
+        try:
+            with self.engine.connect() as conn:
+                # Get existing columns
+                result = conn.execute(text("PRAGMA table_info(predictions)"))
+                existing_columns = {row[1] for row in result.fetchall()}
+                
+                # Define required columns for new simplified schema
+                required_columns = {
+                    'time': 'VARCHAR(20)',
+                    'method': 'VARCHAR(20) NOT NULL DEFAULT "ai"',
+                    'entry_level': 'FLOAT',
+                    'stop_loss': 'FLOAT', 
+                    'take_profit': 'FLOAT',
+                    'confidence': 'FLOAT',
+                    'accuracy': 'FLOAT',
+                    'coin': 'VARCHAR(10) DEFAULT "BTC"',
+                    'notes': 'VARCHAR(500)',
+                    'created_at': 'DATETIME',
+                    'validated_at': 'DATETIME'
+                }
+                
+                # Add missing columns
+                added_columns = []
+                for column_name, column_type in required_columns.items():
+                    if column_name not in existing_columns:
+                        try:
+                            conn.execute(text(f"ALTER TABLE predictions ADD COLUMN {column_name} {column_type}"))
+                            added_columns.append(column_name)
+                            logger.info(f"Added SQLite column: {column_name}")
+                        except Exception as e:
+                            logger.warning(f"Failed to add SQLite column {column_name}: {e}")
+                
+                conn.commit()
+                
+                if added_columns:
+                    logger.info(f"SQLite schema migration completed. Added columns: {added_columns}")
+                else:
+                    logger.info("SQLite schema is up to date")
+                
+                return True
+                
+        except Exception as e:
+            logger.error(f"SQLite schema migration failed: {e}")
+            return False
     
     def initialize_database(self):
         """Initialize database connection with enhanced PostgreSQL support for Render"""
@@ -127,6 +151,10 @@ class DatabaseManager:
             self.Session = sessionmaker(autocommit=False, autoflush=False, bind=self.engine)
             self.use_database = True
             
+            # For SQLite, check and migrate schema if needed
+            if not database_url:  # SQLite (local)
+                self._migrate_sqlite_schema()
+            
             # Test connection
             session = self.get_session()
             session.execute(text("SELECT 1"))
@@ -157,35 +185,20 @@ class DatabaseManager:
         try:
             session = self.get_session()
             
-            # Extract market data
-            market_data = prediction_data.get('market_data', {})
-            
-            # Create prediction record
+            # Create prediction record with simplified structure
             record = PredictionRecord(
                 date=prediction_data.get('date'),
-                session=prediction_data.get('session'),
+                time=prediction_data.get('time'),
                 timestamp=datetime.fromisoformat(prediction_data.get('timestamp').replace('Z', '+00:00')) if prediction_data.get('timestamp') else datetime.utcnow(),
-                btc_price=market_data.get('btc_price'),
-                eth_price=market_data.get('eth_price'),
-                btc_rsi=market_data.get('btc_rsi'),
-                eth_rsi=market_data.get('eth_rsi'),
-                fear_greed=market_data.get('fear_greed'),
-                predictions_data=prediction_data.get('predictions', {}),
-                validation_points=prediction_data.get('validation_points', []),
-                final_accuracy=prediction_data.get('final_accuracy'),
-                ml_processed=prediction_data.get('ml_processed', False),
-                hourly_validated=prediction_data.get('hourly_validated', False),
-                last_validation=datetime.fromisoformat(prediction_data.get('last_validation').replace('Z', '+00:00')) if prediction_data.get('last_validation') else None,
-                trade_metrics=prediction_data.get('trade_metrics'),
-                risk_analysis=prediction_data.get('risk_analysis'),
-                entry_hit=prediction_data.get('entry_hit', False),
-                entry_hit_time=datetime.fromisoformat(prediction_data.get('entry_hit_time').replace('Z', '+00:00')) if prediction_data.get('entry_hit_time') else None,
-                tp_hit=prediction_data.get('tp_hit', False),
-                tp_hit_time=datetime.fromisoformat(prediction_data.get('tp_hit_time').replace('Z', '+00:00')) if prediction_data.get('tp_hit_time') else None,
-                sl_hit=prediction_data.get('sl_hit', False),
-                sl_hit_time=datetime.fromisoformat(prediction_data.get('sl_hit_time').replace('Z', '+00:00')) if prediction_data.get('sl_hit_time') else None,
-                validation_status=prediction_data.get('validation_status', "PENDING"),
-                validation_error=prediction_data.get('validation_error', "")
+                method=prediction_data.get('method'),
+                entry_level=prediction_data.get('entry_level'),
+                stop_loss=prediction_data.get('stop_loss'),
+                take_profit=prediction_data.get('take_profit'),
+                confidence=prediction_data.get('confidence'),
+                accuracy=prediction_data.get('accuracy'),  # Initially None/empty
+                coin=prediction_data.get('coin', 'BTC'),
+                notes=prediction_data.get('notes'),
+                validated_at=datetime.fromisoformat(prediction_data.get('validated_at').replace('Z', '+00:00')) if prediction_data.get('validated_at') else None
             )
             
             session.add(record)
@@ -196,8 +209,9 @@ class DatabaseManager:
             
         except Exception as e:
             logger.error(f"Error saving prediction to database: {e}")
-            session.rollback()
-            session.close()
+            if 'session' in locals():
+                session.rollback()
+                session.close()
             return False
     
     def _save_prediction_json(self, prediction_data: Dict, filename: str) -> bool:
@@ -246,31 +260,17 @@ class DatabaseManager:
             for record in records:
                 prediction = {
                     'date': record.date,
-                    'session': record.session,
+                    'time': record.time,
                     'timestamp': record.timestamp.isoformat() if record.timestamp else None,
-                    'market_data': {
-                        'btc_price': record.btc_price,
-                        'eth_price': record.eth_price,
-                        'btc_rsi': record.btc_rsi,
-                        'eth_rsi': record.eth_rsi,
-                        'fear_greed': record.fear_greed
-                    },
-                    'predictions': record.predictions_data,
-                    'validation_points': record.validation_points,
-                    'final_accuracy': record.final_accuracy,
-                    'ml_processed': record.ml_processed,
-                    'hourly_validated': record.hourly_validated,
-                    'last_validation': record.last_validation.isoformat() if record.last_validation else None,
-                    'trade_metrics': record.trade_metrics,
-                    'risk_analysis': record.risk_analysis,
-                    'entry_hit': record.entry_hit,
-                    'entry_hit_time': record.entry_hit_time.isoformat() if record.entry_hit_time else None,
-                    'tp_hit': record.tp_hit,
-                    'tp_hit_time': record.tp_hit_time.isoformat() if record.tp_hit_time else None,
-                    'sl_hit': record.sl_hit,
-                    'sl_hit_time': record.sl_hit_time.isoformat() if record.sl_hit_time else None,
-                    'validation_status': record.validation_status,
-                    'validation_error': record.validation_error
+                    'method': record.method,
+                    'entry_level': record.entry_level,
+                    'stop_loss': record.stop_loss,
+                    'take_profit': record.take_profit,
+                    'confidence': record.confidence,
+                    'accuracy': record.accuracy,
+                    'coin': record.coin,
+                    'notes': record.notes,
+                    'validated_at': record.validated_at.isoformat() if record.validated_at else None
                 }
                 predictions.append(prediction)
             
@@ -319,10 +319,9 @@ class DatabaseManager:
             
             if record:
                 record.validation_points = validation_points
-                record.hourly_validated = True
-                record.last_validation = datetime.utcnow()
+                record.validated_at = datetime.utcnow()
                 if accuracy is not None:
-                    record.final_accuracy = accuracy
+                    record.accuracy = accuracy
                 
                 session.commit()
                 session.close()
@@ -351,10 +350,9 @@ class DatabaseManager:
             for prediction in data:
                 if prediction.get('timestamp') == prediction_id:
                     prediction['validation_points'] = validation_points
-                    prediction['hourly_validated'] = True
-                    prediction['last_validation'] = datetime.utcnow().isoformat()
+                    prediction['validated_at'] = datetime.utcnow().isoformat()
                     if accuracy is not None:
-                        prediction['final_accuracy'] = accuracy
+                        prediction['accuracy'] = accuracy
                     break
             
             with open(filename, 'w') as f:
@@ -541,6 +539,94 @@ class DatabaseManager:
                     pass
         
         return status
+    
+    def save_simple_prediction(self, date: str, time: str, method: str, entry_level: float, 
+                              stop_loss: float, take_profit: float, confidence: float, 
+                              coin: str = 'BTC', notes: str = None) -> bool:
+        """Save a simple prediction record with core data only"""
+        prediction_data = {
+            'date': date,
+            'time': time,
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+            'method': method,
+            'entry_level': entry_level,
+            'stop_loss': stop_loss,
+            'take_profit': take_profit,
+            'confidence': confidence,
+            'accuracy': None,  # Empty field for later validation
+            'coin': coin,
+            'notes': notes
+        }
+        return self.save_prediction(prediction_data)
+    
+    def update_prediction_accuracy(self, prediction_id: int, accuracy: float) -> bool:
+        """Update the accuracy field for a specific prediction"""
+        if self.use_database:
+            try:
+                session = self.get_session()
+                record = session.query(PredictionRecord).filter(PredictionRecord.id == prediction_id).first()
+                
+                if record:
+                    record.accuracy = accuracy
+                    record.validated_at = datetime.utcnow()
+                    session.commit()
+                    session.close()
+                    logger.info(f"Updated accuracy for prediction {prediction_id}: {accuracy}")
+                    return True
+                else:
+                    logger.warning(f"Prediction {prediction_id} not found")
+                    session.close()
+                    return False
+                    
+            except Exception as e:
+                logger.error(f"Error updating prediction accuracy: {e}")
+                if 'session' in locals():
+                    session.rollback()
+                    session.close()
+                return False
+        else:
+            logger.warning("Database not available for accuracy update")
+            return False
+    
+    def get_predictions_by_method(self, method: str, limit: int = 50) -> List[Dict]:
+        """Get predictions filtered by method (ai or calculation)"""
+        if self.use_database:
+            try:
+                session = self.get_session()
+                query = session.query(PredictionRecord).filter(
+                    PredictionRecord.method == method
+                ).order_by(PredictionRecord.timestamp.desc()).limit(limit)
+                
+                records = query.all()
+                predictions = []
+                
+                for record in records:
+                    prediction = {
+                        'id': record.id,
+                        'date': record.date,
+                        'time': record.time,
+                        'method': record.method,
+                        'entry_level': record.entry_level,
+                        'stop_loss': record.stop_loss,
+                        'take_profit': record.take_profit,
+                        'confidence': record.confidence,
+                        'accuracy': record.accuracy,
+                        'coin': record.coin,
+                        'notes': record.notes,
+                        'validated_at': record.validated_at.isoformat() if record.validated_at else None
+                    }
+                    predictions.append(prediction)
+                
+                session.close()
+                return predictions
+                
+            except Exception as e:
+                logger.error(f"Error getting predictions by method: {e}")
+                if 'session' in locals():
+                    session.close()
+                return []
+        else:
+            return []
 
 # Global database manager instance
 db_manager = DatabaseManager() 

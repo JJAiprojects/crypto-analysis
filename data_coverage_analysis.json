@@ -1,0 +1,24 @@
+{
+  "summary": {
+    "covered": 51.5,
+    "missing": 2,
+    "extras": 7
+  },
+  "sample_data_structure": {
+    "futures": "dict",
+    "crypto": "dict",
+    "btc_dominance": "float",
+    "market_cap": "tuple",
+    "volumes": "dict",
+    "technical_indicators": "dict",
+    "m2_supply": "dict",
+    "fear_greed": "dict",
+    "inflation": "dict",
+    "commodities": "dict",
+    "interest_rates": "dict",
+    "stock_indices": "dict",
+    "social_metrics": "dict",
+    "historical_data": "dict"
+  },
+  "timestamp": "2024-01-20"
+}

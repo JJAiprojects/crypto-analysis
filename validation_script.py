@@ -389,30 +389,34 @@ def validate_prediction(prediction, current_prices):
             "validation_error": None
         }
         
-        # Get prediction details
-        predictions_data = prediction.get("predictions_data", {})
+        # Get prediction details - updated for new structure
+        # Try both old and new formats for backward compatibility
+        predictions_data = prediction.get("professional_analysis", {})
+        if not predictions_data:
+            predictions_data = prediction.get("predictions_data", {})
+            if not predictions_data:
+                predictions_data = prediction.get("predictions", {})
+        
         if not predictions_data:
             validation_result["validation_status"] = "FAILED"
             validation_result["validation_error"] = "No prediction data found"
             return validation_result
             
-        # Check each coin's prediction
-        for coin in ["BTC", "ETH"]:
-            coin_pred = predictions_data.get(coin, {})
-            if not coin_pred:
-                continue
-                
+        # Check each coin's prediction - extract targets from professional analysis
+        price_targets = predictions_data.get("price_targets", {})
+        if price_targets:
             # Get current price
-            current_price = current_prices.get(coin.lower(), None)
+            current_price = current_prices.get("btc", None)
             if not current_price:
-                continue
+                validation_result["validation_status"] = "FAILED"
+                validation_result["validation_error"] = "Current price not available"
+                return validation_result
                 
             # Get prediction details
-            direction = coin_pred.get("direction", "NEUTRAL")
-            targets = coin_pred.get("targets", [])
+            direction = predictions_data.get("primary_scenario", "NEUTRAL")
             
             # Check entry level
-            entry_level = coin_pred.get("entry_level")
+            entry_level = price_targets.get("current")
             if entry_level:
                 hit, hit_type = validate_target_hit(current_price, entry_level, "ENTRY", direction)
                 if hit:
@@ -420,16 +424,18 @@ def validate_prediction(prediction, current_prices):
                     validation_result["entry_hit_time"] = datetime.now(timezone.utc)
             
             # Check take profit levels
-            tp_levels = [t for t in targets if t.get("type") == "TAKE_PROFIT"]
-            for tp in tp_levels:
-                hit, hit_type = validate_target_hit(current_price, tp.get("price"), "TAKE_PROFIT", direction)
-                if hit:
-                    validation_result["tp_hit"] = True
-                    validation_result["tp_hit_time"] = datetime.now(timezone.utc)
-                    break
+            target_1 = price_targets.get("target_1")
+            target_2 = price_targets.get("target_2")
+            for i, tp_price in enumerate([target_1, target_2], 1):
+                if tp_price:
+                    hit, hit_type = validate_target_hit(current_price, tp_price, f"TAKE_PROFIT_{i}", direction)
+                    if hit:
+                        validation_result["tp_hit"] = True
+                        validation_result["tp_hit_time"] = datetime.now(timezone.utc)
+                        break
             
             # Check stop loss level
-            sl_level = coin_pred.get("stop_loss")
+            sl_level = price_targets.get("stop_loss")
             if sl_level:
                 hit, hit_type = validate_target_hit(current_price, sl_level, "STOP_LOSS", direction)
                 if hit:
@@ -788,9 +794,13 @@ def extract_professional_targets(prediction_data):
     try:
         targets = []
         
-        # Handle professional analysis format
+        # Handle professional analysis format - updated for new structure
         if isinstance(prediction_data, dict):
+            # Try both old and new formats for backward compatibility
             pro_analysis = prediction_data.get("professional_analysis", {})
+            if not pro_analysis:
+                pro_analysis = prediction_data.get("predictions", {}).get("professional_analysis", {})
+                
             price_targets = pro_analysis.get("price_targets", {})
             scenario = pro_analysis.get("primary_scenario", "NEUTRAL")
             
@@ -888,22 +898,25 @@ def generate_deep_learning_insights(predictions, period_type="weekly"):
         # Get enhanced accuracy metrics
         enhanced_metrics = calculate_enhanced_accuracy(predictions)
         
-        if not enhanced_metrics or enhanced_metrics["validated_predictions"] == 0:
+        # Check if we have enough data
+        if not enhanced_metrics or enhanced_metrics["total_predictions"] == 0:
             insights["performance_summary"] = {"status": "insufficient_data", "message": "Need more completed trades for analysis"}
             return insights
         
         # === PERFORMANCE SUMMARY ===
         insights["performance_summary"] = {
             "total_predictions": enhanced_metrics["total_predictions"],
-            "completed_trades": enhanced_metrics["validated_predictions"],
-            "overall_win_rate": f"{enhanced_metrics['win_rate_overall']:.1%}",
-            "long_win_rate": f"{enhanced_metrics['win_rate_long']:.1%}",
-            "short_win_rate": f"{enhanced_metrics['win_rate_short']:.1%}",
-            "r_expectancy": f"{enhanced_metrics['r_expectancy']:.2f}R",
-            "average_rr_ratio": f"{enhanced_metrics['average_rr_ratio']:.1f}:1",
-            "profit_factor": f"{enhanced_metrics['profit_factor']:.2f}" if enhanced_metrics['profit_factor'] != float('inf') else "∞",
-            "profitability_status": "Profitable" if enhanced_metrics['r_expectancy'] > 0 else "Unprofitable"
+            "completed_trades": enhanced_metrics["total_predictions"],  # These are the same in the enhanced metrics
+            "overall_accuracy": f"{enhanced_metrics['overall_accuracy']:.1%}",
+            "avg_confidence": f"{enhanced_metrics['avg_confidence']:.1f}%",
+            "profitability_status": "Needs validation" if enhanced_metrics["total_predictions"] < 10 else "Analysis ready"
         }
+        
+        # Skip advanced metrics if we don't have enough data
+        if enhanced_metrics["total_predictions"] < 5:
+            insights["performance_summary"]["status"] = "insufficient_data"
+            insights["performance_summary"]["message"] = f"Only {enhanced_metrics['total_predictions']} validated predictions. Need at least 5 for deep analysis."
+            return insights
         
         # === BEST SETUP FINDINGS ===
         if enhanced_metrics["best_setup_analysis"]:
@@ -1297,9 +1310,15 @@ def extract_confluence_signals(prediction):
     }
     
     try:
-        # Analyze professional analysis components
-        pro_analysis = prediction.get("predictions", {}).get("professional_analysis", {})
-        ai_prediction = prediction.get("predictions", {}).get("ai_prediction", "")
+        # Analyze professional analysis components - updated for new structure
+        # Try both old and new formats for backward compatibility
+        pro_analysis = prediction.get("professional_analysis", {})
+        ai_prediction = prediction.get("ai_prediction", "")
+        
+        if not pro_analysis:
+            # Fall back to old format
+            pro_analysis = prediction.get("predictions", {}).get("professional_analysis", {})
+            ai_prediction = prediction.get("predictions", {}).get("ai_prediction", "")
         
         if pro_analysis:
             component_scores = pro_analysis.get("component_scores", {})
@@ -1411,8 +1430,12 @@ def identify_trade_mistakes(prediction, outcome, market_data, trade_metrics):
         confidence = trade_metrics.get("confidence", 60)
         duration_hours = trade_metrics.get("duration_hours", 0)
         
-        # Get prediction details
-        pro_analysis = prediction.get("predictions", {}).get("professional_analysis", {})
+        # Get prediction details - updated for new structure
+        # Try both old and new formats for backward compatibility
+        pro_analysis = prediction.get("professional_analysis", {})
+        if not pro_analysis:
+            pro_analysis = prediction.get("predictions", {}).get("professional_analysis", {})
+            
         direction = pro_analysis.get("primary_scenario", "NEUTRAL") if pro_analysis else "NEUTRAL"
         
         # Mistake 1: Poor Risk-Reward Ratio
