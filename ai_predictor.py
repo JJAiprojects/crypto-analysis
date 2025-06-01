@@ -18,7 +18,7 @@ class AIPredictor:
         self.client = OpenAI(api_key=self.openai_key)
 
     def create_comprehensive_prompt(self, market_data):
-        """Create comprehensive AI prompt using all 50+ data points"""
+        """Create comprehensive AI prompt using all 50+ data points with 8-step decision framework"""
         
         # Extract all data safely
         crypto = market_data.get("crypto", {})
@@ -49,73 +49,77 @@ class AIPredictor:
         # Count actual data points being used
         data_points_used = self._count_available_data(market_data)
         
-        prompt = f"""You are a professional crypto trader with 15+ years experience. Provide a CONCISE 12-hour trading outlook.
+        prompt = f"""You are a professional crypto trader with 15+ years experience. Follow the 8-STEP DECISION FRAMEWORK internally to analyze the data, but provide only the final CONCISE trading outlook.
 
-MARKET DATA ({data_points_used}/47 indicators):
-================================
+MARKET DATA HIERARCHY ({data_points_used}/47 indicators):
+=========================================================
 
-🔸 CRYPTO PRICES & STRUCTURE
-• BTC: ${f"{crypto.get('btc'):,}" if crypto.get('btc') else 'N/A'} USD
-• ETH: ${f"{crypto.get('eth'):,}" if crypto.get('eth') else 'N/A'} USD  
-• BTC Dominance: {btc_dominance:.1f}%
-• Global Market Cap: ${market_cap_data[0] if market_cap_data[0] else 0:,.0f} USD ({market_cap_data[1] if market_cap_data[1] else 0:+.1f}% 24h)
-
-🔸 TECHNICAL INDICATORS
-BTC: Price ${f"{btc_data.get('price'):,}" if btc_data.get('price') else 'N/A'} | RSI {f"{btc_data.get('rsi14'):.1f}" if btc_data.get('rsi14') is not None else 'N/A'} | Signal: {btc_data.get('signal', 'N/A')} | Trend: {btc_data.get('trend', 'N/A')}
-ETH: Price ${f"{eth_data.get('price'):,}" if eth_data.get('price') else 'N/A'} | RSI {f"{eth_data.get('rsi14'):.1f}" if eth_data.get('rsi14') is not None else 'N/A'} | Signal: {eth_data.get('signal', 'N/A')} | Trend: {eth_data.get('trend', 'N/A')}
-
-🔸 MARKET SENTIMENT
+🔴 HIGH PRIORITY (Macro Trend Confirmation):
 • Fear & Greed: {fear_greed.get('index', 'N/A')} ({fear_greed.get('sentiment', 'N/A')})
+• BTC Trend: {btc_data.get('trend', 'N/A')} | ETH Trend: {eth_data.get('trend', 'N/A')}
+• S&P 500: {f"{stock_indices.get('sp500'):,.0f}" if stock_indices.get('sp500') is not None else 'N/A'} | VIX: {f"{stock_indices.get('vix'):.1f}" if stock_indices.get('vix') is not None else 'N/A'}
+• Global Market Cap: ${market_cap_data[0] if market_cap_data[0] else 0:,.0f} USD ({market_cap_data[1] if market_cap_data[1] else 0:+.1f}% 24h)
+• Inflation: {f"{inflation_data.get('inflation_rate'):.1f}" if inflation_data.get('inflation_rate') is not None else 'N/A'}% | Fed Rate: {f"{rates_data.get('fed_rate'):.2f}" if rates_data.get('fed_rate') is not None else 'N/A'}%
+
+🟡 MEDIUM PRIORITY (Entry Timing & Momentum):
+• BTC: Price ${f"{btc_data.get('price'):,}" if btc_data.get('price') else 'N/A'} | RSI {f"{btc_data.get('rsi14'):.1f}" if btc_data.get('rsi14') is not None else 'N/A'} | Signal: {btc_data.get('signal', 'N/A')}
+• ETH: Price ${f"{eth_data.get('price'):,}" if eth_data.get('price') else 'N/A'} | RSI {f"{eth_data.get('rsi14'):.1f}" if eth_data.get('rsi14') is not None else 'N/A'} | Signal: {eth_data.get('signal', 'N/A')}
+• BTC Support/Resistance: ${f"{btc_data.get('support'):,}" if btc_data.get('support') else 'N/A'} / ${f"{btc_data.get('resistance'):,}" if btc_data.get('resistance') else 'N/A'}
+• ETH Support/Resistance: ${f"{eth_data.get('support'):,}" if eth_data.get('support') else 'N/A'} / ${f"{eth_data.get('resistance'):,}" if eth_data.get('resistance') else 'N/A'}
 • BTC Funding: {f"{btc_futures.get('funding_rate'):.3f}" if btc_futures.get('funding_rate') is not None else 'N/A'}% | ETH Funding: {f"{eth_futures.get('funding_rate'):.3f}" if eth_futures.get('funding_rate') is not None else 'N/A'}%
 
-🔸 MACRO DATA
-• Inflation: {f"{inflation_data.get('inflation_rate'):.1f}" if inflation_data.get('inflation_rate') is not None else 'N/A'}% | Fed Rate: {f"{rates_data.get('fed_rate'):.2f}" if rates_data.get('fed_rate') is not None else 'N/A'}%
-• S&P 500: {f"{stock_indices.get('sp500'):,.0f}" if stock_indices.get('sp500') is not None else 'N/A'} | VIX: {f"{stock_indices.get('vix'):.1f}" if stock_indices.get('vix') is not None else 'N/A'}
+🟢 LOW PRIORITY (Confirmation & Risk Assessment):
+• BTC Long/Short: {f"{btc_futures.get('long_ratio'):.0f}" if btc_futures.get('long_ratio') is not None else 'N/A'}/{f"{btc_futures.get('short_ratio'):.0f}" if btc_futures.get('short_ratio') is not None else 'N/A'} | ETH Long/Short: {f"{eth_futures.get('long_ratio'):.0f}" if eth_futures.get('long_ratio') is not None else 'N/A'}/{f"{eth_futures.get('short_ratio'):.0f}" if eth_futures.get('short_ratio') is not None else 'N/A'}
+• BTC Volume: ${f"{volumes.get('btc_volume', 0)/1e9:.1f}" if volumes.get('btc_volume') else 'N/A'}B | ETH Volume: ${f"{volumes.get('eth_volume', 0)/1e9:.1f}" if volumes.get('eth_volume') else 'N/A'}B
+• BTC Volatility: {btc_data.get('volatility', 'N/A')} | ETH Volatility: {eth_data.get('volatility', 'N/A')}
+• BTC Dominance: {btc_dominance:.1f}%
+• Gold: ${f"{commodities.get('gold'):.0f}" if commodities.get('gold') is not None else 'N/A'} | Oil: ${f"{commodities.get('crude_oil'):.1f}" if commodities.get('crude_oil') is not None else 'N/A'}
 
-REQUIRED FORMAT (be CONCISE):
-============================
+INTERNAL ANALYSIS FRAMEWORK (Do NOT output these steps):
+=======================================================
+STEP 1: Macro Trend Confirmation - Analyze Fear & Greed, BTC/ETH trends, S&P 500/VIX, market cap. Determine overall market bias (BULLISH/BEARISH/NEUTRAL).
+STEP 2: Momentum Check - Evaluate RSI levels. Oversold (<30), neutral (30-70), overbought (>70)? Can momentum continue?
+STEP 3: Support/Resistance Mapping - Current price vs key levels. At resistance (sell zone), support (buy zone), or mid-range? Optimal entry zones?
+STEP 4: Sentiment Risk Assessment - Check funding rates, long/short ratios. Overcrowded trades? High funding = crowded longs (reversal risk).
+STEP 5: Volume/Volatility Confirmation - High volume = conviction. High volatility = wider stops needed.
+STEP 6: Execution Planning - Calculate entry zones (support/resistance + RSI). Set stops below/above key levels. Multiple take profit targets. MINIMUM 1:2 R/R.
+STEP 7: Risk Management - Position size based on volatility. Higher vol = lower leverage. Avoid liquidation near stops.
+STEP 8: Cross-Market Validation - Do crypto signals align with traditional markets? Macro conditions supportive?
+
+REQUIRED OUTPUT FORMAT (CONCISE ONLY):
+=====================================
 
 📊 EXECUTIVE SUMMARY
-• Fear & Greed: [value]
-• Scenario: [BULLISH/BEARISH/NEUTRAL] ([high/medium/low] confidence)
-• Timeframe: [specific period focus]
-• Bullish: [XX.X]% | Bearish: [XX.X]%
-• Strongest Signal: [key factor]
-• Volatility: [High/Medium/Low]
+• Fear & Greed: [value] ([sentiment])
+• Market Bias: [BULLISH/BEARISH/NEUTRAL] ([high/medium/low] confidence)
+• Primary Driver: [key factor driving direction]
+• Risk Level: [High/Medium/Low] 
+• Position Crowding: [BTC/ETH crowding assessment]
 
-BTC ANALYSIS
+🎯 BTC EXECUTION PLAN - [BIAS]
 💰 Current: $[price]
-📈 Resistance: $[level]
-📉 Support: $[level]
-📊 RSI: [value]
-📊 Signal: [BUY/SELL/NEUTRAL]
-📈 Trend: [assessment]
+📍 Entry Zone: $[low]-$[high] (reasoning: [support/resistance/RSI logic])
+🛑 Stop Loss: $[price] ([X]% risk)
+🎯 Target 1: $[price] ([X]% gain) 
+🎯 Target 2: $[price] ([X]% gain)
+⚖️ Risk/Reward: [X:X]
+📊 Confidence: [XX]% ([key reasoning])
 
-🎯 BTC PLAN - [BULLISH/BEARISH/NEUTRAL]
-• Entry: $[range]
-• Target: $[price] ([+/-]X.X%)
-• Stop: $[price] ([+/-]X.X%)
-• R/R: [ratio]
-• Confidence: [XX]% ([HIGH/MEDIUM/LOW])
-
-ETH ANALYSIS  
+🎯 ETH EXECUTION PLAN - [BIAS]
 💰 Current: $[price]
-📈 Resistance: $[level]
-📉 Support: $[level]
-📊 RSI: [value]
-📊 Signal: [BUY/SELL/NEUTRAL]
-📈 Trend: [assessment]
+📍 Entry Zone: $[low]-$[high] (reasoning: [support/resistance/RSI logic])
+🛑 Stop Loss: $[price] ([X]% risk)
+🎯 Target 1: $[price] ([X]% gain)
+🎯 Target 2: $[price] ([X]% gain)
+⚖️ Risk/Reward: [X:X]
+📊 Confidence: [XX]% ([key reasoning])
 
-🎯 ETH PLAN - [BULLISH/BEARISH/NEUTRAL]
-• Entry: $[range]
-• Target: $[price] ([+/-]X.X%)
-• Stop: $[price] ([+/-]X.X%)
-• R/R: [ratio]
-• Confidence: [XX]% ([HIGH/MEDIUM/LOW])
+⚠️ RISK NOTES
+• Correlation Risk: [BTC-ETH positioning notes]
+• Volatility: [adjustment recommendations]
+• Macro Risk: [traditional market alignment]
 
-STOP HERE. Do not add any market commentary, explanations, or disclaimers after the ETH plan.
-
-Keep response under 800 words. Focus on actionable insights."""
+STOP HERE. Keep under 600 words total. Be precise and actionable."""
         
         return prompt
 

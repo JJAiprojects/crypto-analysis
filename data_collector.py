@@ -510,8 +510,7 @@ class CryptoDataCollector:
                 }
                 
                 headers = {
-                    "X-MBX-APIKEY": "",
-                    "User-Agent": "Mozilla/5.0"
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
                 }
                 
                 data = self.resilient_request(url, params=params, headers=headers)
@@ -703,6 +702,10 @@ class CryptoDataCollector:
                 indicators[f"{label.lower()}_resistance"] = nearest_resistance
                 
                 print(f"[DEBUG] {label} - Price: ${current_price:,.2f}, RSI: {rsi:.1f}, Signal: {signal}")
+                
+                # Add delay between API calls to be respectful to Binance servers
+                if symbol != "ETHUSDT":  # Don't delay after the last symbol
+                    time.sleep(0.5)
                 
             except Exception as e:
                 print(f"[ERROR] Technicals {label}: {e}")
