@@ -86,18 +86,27 @@ STEP 6: Execution Planning - Calculate entry zones (support/resistance + RSI). S
 STEP 7: Risk Management - Position size based on volatility. Higher vol = lower leverage. Avoid liquidation near stops.
 STEP 8: Cross-Market Validation - Do crypto signals align with traditional markets? Macro conditions supportive?
 
+TIMEFRAME ESTIMATION LOGIC:
+• 2-4 hours: Strong breakout setups, oversold/overbought bounces, high volatility scalps
+• 6-12 hours: Support/resistance tests, moderate momentum plays, standard swing setups  
+• 12-24 hours: Trend continuation, consolidation breakouts, macro-driven moves
+• 24-48 hours: Major resistance/support breaks, trend reversals, macro event impacts
+Base timeframe on: volatility level, proximity to key levels, momentum strength, and market structure.
+
 REQUIRED OUTPUT FORMAT (CONCISE ONLY):
 =====================================
 
 📊 EXECUTIVE SUMMARY
 • Fear & Greed: [value] ([sentiment])
 • Market Bias: [BULLISH/BEARISH/NEUTRAL] ([high/medium/low] confidence)
+• Expected Timeframe: [2-4h/6-12h/12-24h/24-48h] ([setup type])
 • Primary Driver: [key factor driving direction]
 • Risk Level: [High/Medium/Low] 
 • Position Crowding: [BTC/ETH crowding assessment]
 
 🎯 BTC EXECUTION PLAN - [BIAS]
 💰 Current: $[price]
+⏱️ Timeframe: [X-Yh] ([breakout/swing/trend/reversal] setup)
 📍 Entry Zone: $[low]-$[high] (reasoning: [support/resistance/RSI logic])
 🛑 Stop Loss: $[price] ([X]% risk)
 🎯 Target 1: $[price] ([X]% gain) 
@@ -107,6 +116,7 @@ REQUIRED OUTPUT FORMAT (CONCISE ONLY):
 
 🎯 ETH EXECUTION PLAN - [BIAS]
 💰 Current: $[price]
+⏱️ Timeframe: [X-Yh] ([breakout/swing/trend/reversal] setup)
 📍 Entry Zone: $[low]-$[high] (reasoning: [support/resistance/RSI logic])
 🛑 Stop Loss: $[price] ([X]% risk)
 🎯 Target 1: $[price] ([X]% gain)
