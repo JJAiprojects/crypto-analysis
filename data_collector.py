@@ -29,6 +29,8 @@ class CryptoDataCollector:
                 # Check for rate limiting
                 if response.status_code == 429:
                     retry_after = int(response.headers.get("Retry-After", 60))
+                    # Cap retry_after to prevent excessive delays on Render
+                    retry_after = min(retry_after, 120)  # Max 2 minutes
                     print(f"[WARN] Rate limited, waiting {retry_after}s (attempt {attempt+1}/{max_retries})")
                     time.sleep(retry_after)
                     continue
@@ -40,6 +42,10 @@ class CryptoDataCollector:
                 elif response.status_code == 404:
                     print(f"[ERROR] Endpoint not found: {url}")
                     return None
+                elif response.status_code == 502 or response.status_code == 503:
+                    print(f"[WARN] Server temporarily unavailable ({response.status_code}): {url}")
+                    time.sleep(min(10, 2 ** attempt))  # Exponential backoff up to 10s
+                    continue
                 elif response.status_code == 500:
                     print(f"[ERROR] Server error from {url}")
                     time.sleep(5)
@@ -58,7 +64,7 @@ class CryptoDataCollector:
                     return None
                 
             except requests.exceptions.RequestException as e:
-                backoff = self.config["api"]["backoff_factor"] ** attempt
+                backoff = min(30, self.config["api"]["backoff_factor"] ** attempt)  # Cap backoff at 30s
                 print(f"[ERROR] API request failed (attempt {attempt+1}/{max_retries}): {e}")
                 if attempt < max_retries - 1:
                     print(f"[INFO] Retrying in {backoff:.1f}s...")
@@ -203,12 +209,24 @@ class CryptoDataCollector:
                 params = {"function": "TREASURY_YIELD", "interval": "daily", "maturity": "10year", "apikey": alpha_key}
                 treasury_data = self.resilient_request(url, params)
                 
-                if fed_data and treasury_data:
-                    return {
-                        "fed_rate": float(fed_data["data"][0]["value"]),
-                        "t10_yield": float(treasury_data["data"][0]["value"]),
-                        "rate_date": fed_data["data"][0]["date"]
-                    }
+                # Check if both responses have expected data structure
+                if (fed_data and "data" in fed_data and len(fed_data["data"]) > 0 and 
+                    treasury_data and "data" in treasury_data and len(treasury_data["data"]) > 0):
+                    try:
+                        return {
+                            "fed_rate": float(fed_data["data"][0]["value"]),
+                            "t10_yield": float(treasury_data["data"][0]["value"]),
+                            "rate_date": fed_data["data"][0]["date"]
+                        }
+                    except (KeyError, ValueError, IndexError) as parse_error:
+                        print(f"[ERROR] AlphaVantage data parsing: {parse_error}")
+                else:
+                    print("[WARN] AlphaVantage interest rates: Invalid response structure - missing 'data' key or empty data")
+                    if fed_data:
+                        print(f"[DEBUG] Fed response keys: {list(fed_data.keys())}")
+                    if treasury_data:
+                        print(f"[DEBUG] Treasury response keys: {list(treasury_data.keys())}")
+                        
             except Exception as e:
                 print(f"[ERROR] AlphaVantage interest rates: {e}")
         
@@ -395,42 +413,85 @@ class CryptoDataCollector:
         data = {}
         
         def get_funding(symbol):
-            url = f"{base_url}/fapi/v1/premiumIndex"
-            result = self.resilient_request(url, {"symbol": symbol})
-            return float(result["lastFundingRate"]) * 100 if result else None
+            try:
+                url = f"{base_url}/fapi/v1/premiumIndex"
+                result = self.resilient_request(url, {"symbol": symbol})
+                if result and "lastFundingRate" in result:
+                    return float(result["lastFundingRate"]) * 100
+                else:
+                    print(f"[WARN] No funding rate data for {symbol}")
+                    return None
+            except Exception as e:
+                print(f"[ERROR] Funding rate for {symbol}: {e}")
+                return None
             
         def get_ratio(symbol):
-            url = f"{base_url}/futures/data/topLongShortAccountRatio"
-            result = self.resilient_request(url, {"symbol": symbol, "period": "1d", "limit": 1})
-            if result and len(result) > 0:
-                return float(result[0]["longAccount"]), float(result[0]["shortAccount"])
-            return None, None
+            try:
+                url = f"{base_url}/futures/data/topLongShortAccountRatio"
+                result = self.resilient_request(url, {"symbol": symbol, "period": "1d", "limit": 1})
+                if result and len(result) > 0 and "longAccount" in result[0] and "shortAccount" in result[0]:
+                    return float(result[0]["longAccount"]), float(result[0]["shortAccount"])
+                else:
+                    print(f"[WARN] No long/short ratio data for {symbol}")
+                    return None, None
+            except Exception as e:
+                print(f"[ERROR] Long/short ratio for {symbol}: {e}")
+                return None, None
             
         def get_oi(symbol):
-            url = f"{base_url}/futures/data/openInterestHist"
-            result = self.resilient_request(url, {"symbol": symbol, "period": "5m", "limit": 1})
-            return float(result[0]["sumOpenInterestValue"]) if result and len(result) > 0 else None
+            try:
+                url = f"{base_url}/futures/data/openInterestHist"
+                result = self.resilient_request(url, {"symbol": symbol, "period": "5m", "limit": 1})
+                if result and len(result) > 0 and "sumOpenInterestValue" in result[0]:
+                    return float(result[0]["sumOpenInterestValue"])
+                else:
+                    print(f"[WARN] No open interest data for {symbol}")
+                    return None
+            except Exception as e:
+                print(f"[ERROR] Open interest for {symbol}: {e}")
+                return None
         
-        with concurrent.futures.ThreadPoolExecutor(max_workers=len(symbols)*3) as executor:
+        # Use smaller thread pool to reduce concurrent load on Binance API
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
             futures = {}
             for sym, label in symbols.items():
                 futures[f"{label}_funding"] = executor.submit(get_funding, sym)
                 futures[f"{label}_ratio"] = executor.submit(get_ratio, sym)
                 futures[f"{label}_oi"] = executor.submit(get_oi, sym)
+                # Add small delay between submissions to spread load
+                time.sleep(0.2)
             
             for sym, label in symbols.items():
-                funding = futures[f"{label}_funding"].result()
-                long_ratio, short_ratio = futures[f"{label}_ratio"].result()
-                oi = futures[f"{label}_oi"].result()
-                
-                data[label] = {
-                    "funding_rate": funding,
-                    "long_ratio": long_ratio,
-                    "short_ratio": short_ratio,
-                    "open_interest": oi
-                }
-                
-                data[f"{label.lower()}_funding"] = funding
+                try:
+                    funding = futures[f"{label}_funding"].result(timeout=30)
+                    long_ratio, short_ratio = futures[f"{label}_ratio"].result(timeout=30)
+                    oi = futures[f"{label}_oi"].result(timeout=30)
+                    
+                    data[label] = {
+                        "funding_rate": funding,
+                        "long_ratio": long_ratio,
+                        "short_ratio": short_ratio,
+                        "open_interest": oi
+                    }
+                    
+                    data[f"{label.lower()}_funding"] = funding
+                    
+                except concurrent.futures.TimeoutError:
+                    print(f"[ERROR] Timeout getting futures data for {label}")
+                    data[label] = {
+                        "funding_rate": None,
+                        "long_ratio": None,
+                        "short_ratio": None,
+                        "open_interest": None
+                    }
+                except Exception as e:
+                    print(f"[ERROR] Processing futures data for {label}: {e}")
+                    data[label] = {
+                        "funding_rate": None,
+                        "long_ratio": None,
+                        "short_ratio": None,
+                        "open_interest": None
+                    }
                 
         return data
 
@@ -704,8 +765,9 @@ class CryptoDataCollector:
                 print(f"[DEBUG] {label} - Price: ${current_price:,.2f}, RSI: {rsi:.1f}, Signal: {signal}")
                 
                 # Add delay between API calls to be respectful to Binance servers
+                # Increased delay for Render.com to prevent rate limiting
                 if symbol != "ETHUSDT":  # Don't delay after the last symbol
-                    time.sleep(0.5)
+                    time.sleep(2.0)  # Increased from 0.5s to 2.0s for better rate limiting
                 
             except Exception as e:
                 print(f"[ERROR] Technicals {label}: {e}")
@@ -737,7 +799,7 @@ class CryptoDataCollector:
                     interval = "1mo"
                     
                 try:
-                    data = yf.download(ticker, period=period, interval=interval, progress=False)
+                    data = yf.download(ticker, period=period, interval=interval, progress=False, auto_adjust=False)
                     if data.empty:
                         continue
                         
@@ -1067,6 +1129,73 @@ class CryptoDataCollector:
         # Count successful data points - ACCURATE COUNT
         data_points_collected = self._count_data_points(results)
         print(f"\n[INFO] 📊 Data collection complete: {data_points_collected}/47 data points")
+        
+        # Show missing data points for debugging
+        if data_points_collected < 47:
+            missing_points = []
+            
+            # Check each category
+            crypto = results.get("crypto", {})
+            if not crypto.get("btc"): missing_points.append("BTC price")
+            if not crypto.get("eth"): missing_points.append("ETH price")
+            
+            tech = results.get("technical_indicators", {})
+            for coin in ["BTC", "ETH"]:
+                coin_data = tech.get(coin, {})
+                if not coin_data.get('rsi14'): missing_points.append(f"{coin} RSI")
+                if not coin_data.get('signal'): missing_points.append(f"{coin} signal")
+                if not coin_data.get('support'): missing_points.append(f"{coin} support")
+                if not coin_data.get('resistance'): missing_points.append(f"{coin} resistance")
+                if not coin_data.get('trend'): missing_points.append(f"{coin} trend")
+                if not coin_data.get('volatility'): missing_points.append(f"{coin} volatility")
+            
+            futures = results.get("futures", {})
+            for coin in ["BTC", "ETH"]:
+                coin_data = futures.get(coin, {})
+                if not coin_data or coin_data.get('funding_rate') is None: missing_points.append(f"{coin} funding rate")
+                if not coin_data or coin_data.get('long_ratio') is None: missing_points.append(f"{coin} long ratio")
+                if not coin_data or coin_data.get('short_ratio') is None: missing_points.append(f"{coin} short ratio")
+                if not coin_data or coin_data.get('open_interest') is None: missing_points.append(f"{coin} open interest")
+            
+            if not results.get("fear_greed", {}).get("index"): missing_points.append("Fear & Greed index")
+            if not results.get("btc_dominance"): missing_points.append("BTC dominance")
+            if not results.get("market_cap"): missing_points.append("Global market cap")
+            
+            volumes = results.get("volumes", {})
+            if not volumes.get("btc_volume"): missing_points.append("BTC volume")
+            if not volumes.get("eth_volume"): missing_points.append("ETH volume")
+            
+            if not results.get("m2_supply", {}).get("m2_supply"): missing_points.append("M2 money supply")
+            if results.get("inflation", {}).get("inflation_rate") is None: missing_points.append("Inflation rate")
+            
+            rates = results.get("interest_rates", {})
+            if rates.get("fed_rate") is None: missing_points.append("Fed funds rate")
+            if rates.get("t10_yield") is None: missing_points.append("10Y Treasury yield")
+            
+            indices = results.get("stock_indices", {})
+            for key, name in [("sp500", "S&P 500"), ("nasdaq", "NASDAQ"), ("dow_jones", "Dow Jones"), ("vix", "VIX")]:
+                if indices.get(key) is None: missing_points.append(name)
+            
+            commodities = results.get("commodities", {})
+            for key, name in [("gold", "Gold"), ("silver", "Silver"), ("crude_oil", "Crude Oil"), ("natural_gas", "Natural Gas")]:
+                if commodities.get(key) is None: missing_points.append(name)
+            
+            social = results.get("social_metrics", {})
+            if not social.get("forum_posts"): missing_points.append("Forum posts")
+            if not social.get("forum_topics"): missing_points.append("Forum topics")
+            if not social.get("btc_github_stars"): missing_points.append("BTC GitHub stars")
+            if not social.get("eth_github_stars"): missing_points.append("ETH GitHub stars")
+            if not social.get("btc_recent_commits"): missing_points.append("BTC recent commits")
+            if not social.get("eth_recent_commits"): missing_points.append("ETH recent commits")
+            
+            historical = results.get("historical_data", {})
+            if not historical.get("BTC"): missing_points.append("BTC historical data")
+            if not historical.get("ETH"): missing_points.append("ETH historical data")
+            
+            if missing_points:
+                print(f"[WARN] Missing data points: {', '.join(missing_points[:10])}")
+                if len(missing_points) > 10:
+                    print(f"[WARN] ... and {len(missing_points) - 10} more")
         
         # Add verbose logging
         self._log_data_verbose(results)
