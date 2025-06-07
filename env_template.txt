@@ -1,4 +1,4 @@
-# Crypto Dual Prediction System - Environment Variables Template
+# Crypto AI Prediction System - Environment Variables Template
 # Copy this content to .env file and fill in your actual values
 
 # =============================================================================
@@ -16,6 +16,31 @@ FRED_API_KEY=your-fred-api-key-here
 # Alpha Vantage API Key (Required for stock market data)
 # Get from: https://www.alphavantage.co/support/#api-key
 ALPHAVANTAGE_API_KEY=your-alphavantage-api-key-here
+
+# =============================================================================
+# ENHANCED DATA COLLECTION API KEYS (New Features)
+# =============================================================================
+
+# CoinMarketCal API Key (Required for economic calendar events)
+# Get from: https://coinmarketcal.com/en/developer/register
+COINMARKETCAL_API_KEY=your-coinmarketcal-api-key-here
+
+# NewsAPI Key (Optional for news sentiment analysis)
+# Get from: https://newsapi.org/register
+NEWS_API_KEY=your-newsapi-key-here
+
+# Binance API Keys (Required for order book analysis & liquidation data)
+# Get from: https://binance.com/en/my/settings/api-management
+BINANCE_API_KEY=your-binance-api-key-here
+BINANCE_SECRET=your-binance-secret-here
+
+# Etherscan API Key (Optional for on-chain whale tracking)
+# Get from: https://etherscan.io/apis
+ETHERSCAN_API_KEY=your-etherscan-api-key-here
+
+# Polygon.io API Key (Optional for additional market data)
+# Get from: https://polygon.io/
+POLYGON_API_KEY=your-polygon-api-key-here
 
 # =============================================================================
 # TELEGRAM CONFIGURATION (Production)

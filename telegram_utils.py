@@ -8,7 +8,7 @@ class TelegramBot:
         self.bot_token = bot_token or os.environ.get("TELEGRAM_BOT_TOKEN")
         self.chat_id = chat_id or os.environ.get("TELEGRAM_CHAT_ID")
         
-    def send_message(self, message, disable_web_page_preview=True):
+    def send_message(self, message, disable_web_page_preview=True, parse_mode="HTML"):
         """Send a message to Telegram with length checking and error handling"""
         if not self.bot_token or not self.chat_id:
             print("[INFO] Telegram bot not configured")
@@ -22,11 +22,11 @@ class TelegramBot:
         try:
             url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
             payload = {
-                "chat_id": self.chat_id,
-                "text": message,
-                "parse_mode": "HTML",
-                "disable_web_page_preview": disable_web_page_preview
-            }
+            "chat_id": self.chat_id,
+            "text": message,
+            "parse_mode": parse_mode,
+            "disable_web_page_preview": disable_web_page_preview
+        }
             
             print(f"[DEBUG] Sending message ({len(message)} chars)")
             response = requests.post(url, json=payload, timeout=30)
@@ -58,11 +58,15 @@ class TelegramBot:
             return False
     
     def _send_plain_message(self, message, disable_web_page_preview=True):
-        """Send message without Markdown formatting as fallback"""
+        """Send message without HTML/Markdown formatting as fallback"""
         try:
             url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
-            # Remove markdown formatting
-            plain_message = message.replace('*', '').replace('`', '').replace('_', '')
+            # Remove HTML and markdown formatting
+            plain_message = (message.replace('<b>', '').replace('</b>', '')
+                           .replace('<u>', '').replace('</u>', '')
+                           .replace('<i>', '').replace('</i>', '')
+                           .replace('━━━', '---')  # Replace box drawing chars with dashes
+                           .replace('*', '').replace('`', '').replace('_', ''))
             
             payload = {
                 "chat_id": self.chat_id,

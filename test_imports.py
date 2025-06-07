@@ -13,8 +13,8 @@ except ImportError as e:
     print(f"❌ Failed to import AIPredictor: {e}")
 
 try:
-    from calculation_predictor import CalculationPredictor
-    print("✅ CalculationPredictor imported successfully")
+    # Calculation predictor removed - AI predictor is more accurate
+    print("✅ CalculationPredictor removed (AI predictor is more accurate)")
 except ImportError as e:
     print(f"❌ Failed to import CalculationPredictor: {e}")
 

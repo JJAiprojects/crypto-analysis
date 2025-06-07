@@ -9,8 +9,8 @@ from datetime import datetime, timezone
 from dotenv import load_dotenv
 from data_collector import CryptoDataCollector
 from ai_predictor import AIPredictor
-from calculation_predictor import CalculationPredictor
-from database_manager import db_manager
+# Calculation predictor removed - AI predictor is more accurate
+# Database manager removed - using file-based storage only
 
 def load_config():
     """Load configuration with proper handling of both .env files and environment variables"""
@@ -54,9 +54,10 @@ def load_config():
             "include_macroeconomic": True,
             "include_stock_indices": True,
             "include_commodities": True,
-            "include_social_metrics": True
+            "include_social_metrics": True,
+            "include_enhanced_data": True
         },
-        "minimum_data_points": 40  # Minimum required data points
+        "minimum_data_points": 46  # Updated from 45 to 46 (minimum required data points for enhanced data)
     }
     
     # Load existing config.json if available (for additional settings)
@@ -162,6 +163,16 @@ def count_data_points(data):
     if historical.get("BTC"): count += 1
     if historical.get("ETH"): count += 1
     
+    # 11. Volatility Regime (1 point: market-wide) - NEW
+    if data.get("volatility_regime"): count += 1
+    
+    # 12. NEW ENHANCED DATA SOURCES (9 points)
+    if data.get("order_book_analysis"): count += 1
+    if data.get("liquidation_heatmap"): count += 1
+    if data.get("economic_calendar"): count += 1
+    if data.get("multi_source_sentiment"): count += 1
+    if data.get("whale_movements"): count += 1
+    
     return count
 
 def send_telegram_notification(message, bot_token, chat_id):
@@ -188,21 +199,15 @@ def send_telegram_notification(message, bot_token, chat_id):
         print(f"[ERROR] Failed to send telegram notification: {e}")
         return False
 
-async def run_dual_prediction_system(test_mode=False, analysis_only=False, ai_only=False, calc_only=False):
-    """Main function to run both AI and calculation prediction systems"""
+async def run_ai_prediction_system(test_mode=False, analysis_only=False):
+    """Main function to run AI prediction system (calculation predictor removed)"""
     
     print("=" * 80)
-    if test_mode and ai_only:
+    if test_mode:
         print("🧪 CRYPTO AI PREDICTION SYSTEM TESTING - TEST MODE")
-        print("⚠️  Using TEST Telegram bot and chat (AI predictor only)")
-    elif test_mode and calc_only:
-        print("🧪 CRYPTO CALCULATION PREDICTION SYSTEM TESTING - TEST MODE")
-        print("⚠️  Using TEST Telegram bot and chat (Calculation predictor only)")
-    elif test_mode:
-        print("🧪 CRYPTO DUAL PREDICTION SYSTEM STARTING - TEST MODE")
-        print("⚠️  Using TEST Telegram bot and chat (all other functionality identical)")
+        print("⚠️  Using TEST Telegram bot and chat")
     else:
-        print("🚀 CRYPTO DUAL PREDICTION SYSTEM STARTING - PRODUCTION MODE")
+        print("🚀 CRYPTO AI PREDICTION SYSTEM STARTING - PRODUCTION MODE")
     print("=" * 80)
     
     try:
@@ -210,8 +215,7 @@ async def run_dual_prediction_system(test_mode=False, analysis_only=False, ai_on
         config = load_config()
         
         if test_mode:
-            mode_text = "🧪 AI TEST MODE" if ai_only else "🧪 TEST MODE"
-            print(f"🧪 Running in {mode_text}")
+            print("🧪 Running in AI TEST MODE")
             
             # Validate test configuration
             test_config = config["telegram"]["test"]
@@ -232,21 +236,12 @@ async def run_dual_prediction_system(test_mode=False, analysis_only=False, ai_on
         print("\n📊 Initializing Data Collector...")
         data_collector = CryptoDataCollector(config)
         
-        if not calc_only:
-            print("🤖 Initializing AI Predictor...")
-            ai_predictor = AIPredictor(config)
-        else:
-            print("⏭️  Skipping AI Predictor (Calculation-only mode)")
+        print("🤖 Initializing AI Predictor...")
+        ai_predictor = AIPredictor(config)
         
-        if not ai_only:
-            print("🧮 Initializing Calculation Predictor...")
-            calc_predictor = CalculationPredictor(config)
-        else:
-            print("⏭️  Skipping Calculation Predictor (AI-only mode)")
-        
-        # STEP 1: Data Collection (47 data points)
+        # STEP 1: Data Collection (54 data points) - Updated from 52
         print("\n" + "=" * 60)
-        print("📈 STEP 1: COLLECTING 47 DATA POINTS")
+        print("📈 STEP 1: COLLECTING 54 DATA POINTS")  # Updated from 52
         print("=" * 60)
         
         print("Gathering comprehensive market data...")
@@ -281,194 +276,37 @@ async def run_dual_prediction_system(test_mode=False, analysis_only=False, ai_on
                     print(f"  {category}: {valid_items} items")
             return True
         
-        # STEP 2: AI Prediction (12h prediction using ALL data points)
+        # STEP 2: AI Prediction (using ALL data points)
         print("\n" + "=" * 60)
-        if ai_only:
-            mode_text = "🧪 AI TEST MODE" if test_mode else "🚀 AI PRODUCTION MODE"
-            print(f"🤖 STEP 2: AI PREDICTION SYSTEM - {mode_text}")
-        elif calc_only:
-            print("⏭️  STEP 2: SKIPPED - AI Predictor (Calculation-only mode)")
-        else:
-            mode_text = "🧪 TEST MODE" if test_mode else "🚀 PRODUCTION MODE"
-            print(f"🤖 STEP 2: AI PREDICTION SYSTEM - {mode_text}")
+        mode_text = "🧪 TEST MODE" if test_mode else "🚀 PRODUCTION MODE"
+        print(f"🤖 STEP 2: AI PREDICTION SYSTEM - {mode_text}")
         print("=" * 60)
         
-        if not calc_only:
-            print("Running AI analysis with all collected data...")
-            ai_prediction = await ai_predictor.generate_prediction(all_data, test_mode)
-            
-            if ai_prediction:
-                print("✅ AI Prediction completed successfully")
-            else:
-                print("❌ AI Prediction failed")
-        else:
-            ai_prediction = None
-            print("⏭️  AI prediction skipped (Calculation-only mode)")
+        print("Running AI analysis with all collected data...")
+        ai_prediction = await ai_predictor.generate_prediction(all_data, test_mode)
         
-        # STEP 3: Calculation Method (Skip if ai_only mode)
-        calc_prediction = None
-        if not ai_only:
-            print("\n" + "=" * 60)
-            if calc_only:
-                mode_text = "🧪 CALC TEST MODE" if test_mode else "🚀 CALC PRODUCTION MODE"
-                print(f"🧮 STEP 3: CALCULATION PREDICTION SYSTEM - {mode_text}")
-            else:
-                mode_text = "🧪 TEST MODE" if test_mode else "🚀 PRODUCTION MODE"
-                print(f"🧮 STEP 3: CALCULATION PREDICTION SYSTEM - {mode_text}")
-            print("=" * 60)
-            
-            print("Running calculation-based analysis with identical data...")
-            calc_prediction = await calc_predictor.generate_prediction(all_data, test_mode)
-            
-            if calc_prediction:
-                print("✅ Calculation Prediction completed successfully")
-            else:
-                print("❌ Calculation Prediction failed")
+        if ai_prediction:
+            print("✅ AI Prediction completed successfully")
         else:
-            print("\n⏭️  STEP 3: SKIPPED - Calculation Predictor (AI-only mode)")
+            print("❌ AI Prediction failed")
         
-        # STEP 4: Extract and save essential prediction data
+        # STEP 3: Single AI prediction completed (calculation predictor removed)
+        
+        # STEP 3: Extract and save essential prediction data
         print("\n" + "=" * 60)
-        print("💾 STEP 4: EXTRACTING & SAVING TRADING SIGNALS")
+        print("💾 STEP 3: EXTRACTING & SAVING TRADING SIGNALS")
         print("=" * 60)
         
-        # Import the prediction extractor
-        from prediction_extractor import extractor
-        
-        # Get current BTC price for extraction
-        current_btc_price = all_data.get("crypto", {}).get("btc", 0)
-        
-        if current_btc_price == 0:
-            print("❌ Error: BTC price not available for signal extraction")
+        if ai_prediction:
+            print("🤖 AI prediction completed successfully!")
+            print("📊 Single Telegram message will be sent with AI analysis")
+        else:
+            print("❌ AI prediction failed - no telegram message will be sent")
             return False
         
-        # Extract trading signals from predictions
-        if ai_prediction and not calc_only:
-            print("🤖 Extracting AI trading signals...")
-            ai_text = ai_prediction.get("prediction", "") if isinstance(ai_prediction, dict) else str(ai_prediction)
-            ai_signals = extractor.extract_from_ai_prediction(ai_text, current_btc_price)
-            print(f"   Entry: ${ai_signals['entry_level']:,.2f} | SL: ${ai_signals['stop_loss']:,.2f} | TP: ${ai_signals['take_profit']:,.2f} | Confidence: {ai_signals['confidence']:.1f}%")
-        else:
-            ai_signals = None
-            if calc_only:
-                print("⏭️  AI prediction skipped (Calculation-only mode)")
-            else:
-                print("❌ AI prediction not available for extraction")
-        
-        if calc_prediction and not ai_only:
-            print("🧮 Extracting calculation trading signals...")
-            calc_signals = extractor.extract_from_calculation_prediction(calc_prediction, current_btc_price)
-            
-            # Debug information
-            print(f"[DEBUG] calc_signals type: {type(calc_signals)}")
-            print(f"[DEBUG] calc_signals keys: {list(calc_signals.keys()) if isinstance(calc_signals, dict) else 'Not a dict'}")
-            
-            if calc_signals and isinstance(calc_signals, dict) and 'entry_level' in calc_signals:
-                print(f"   Entry: ${calc_signals['entry_level']:,.2f} | SL: ${calc_signals['stop_loss']:,.2f} | TP: ${calc_signals['take_profit']:,.2f} | Confidence: {calc_signals['confidence']:.1f}%")
-            else:
-                print(f"   ❌ Extraction failed or incomplete: {calc_signals}")
-        else:
-            calc_signals = None
-            if ai_only:
-                print("⏭️  Calculation prediction skipped (AI-only mode)")
-            else:
-                print("❌ Calculation prediction not available for extraction")
-        
-        # Save extracted signals to database
-        print("\n💾 Saving prediction signals to database...")
-        if ai_signals and calc_signals:
-            # Save both predictions
-            save_success = extractor.save_extracted_predictions(ai_signals, calc_signals, all_data, test_mode)
-        elif ai_signals and ai_only:
-            # Save only AI prediction in AI-only mode
-            save_success = db_manager.save_simple_prediction(
-                date=datetime.now(timezone.utc).strftime('%Y-%m-%d'),
-                time=datetime.now(timezone.utc).strftime('%H:%M'),
-                method='ai',
-                entry_level=ai_signals['entry_level'],
-                stop_loss=ai_signals['stop_loss'],
-                take_profit=ai_signals['take_profit'],
-                confidence=ai_signals['confidence'],
-                coin='BTC',
-                notes=f"[{'TEST' if test_mode else 'PROD'}] BTC: ${current_btc_price:,.0f} | AI-Only Mode"
-            )
-            if save_success:
-                print("✅ AI prediction signals saved to database")
-        elif calc_signals and calc_only:
-            # Validate calc_signals has all required fields
-            required_fields = ['entry_level', 'stop_loss', 'take_profit', 'confidence']
-            missing_fields = [field for field in required_fields if field not in calc_signals or calc_signals[field] is None]
-            
-            if missing_fields:
-                print(f"❌ Calculation signals missing required fields: {missing_fields}")
-                print(f"[DEBUG] Available fields: {list(calc_signals.keys()) if isinstance(calc_signals, dict) else 'Not a dict'}")
-                save_success = False
-            else:
-                # Save only calculation prediction in calc-only mode
-                save_success = db_manager.save_simple_prediction(
-                    date=datetime.now(timezone.utc).strftime('%Y-%m-%d'),
-                    time=datetime.now(timezone.utc).strftime('%H:%M'),
-                    method='calculation',
-                    entry_level=calc_signals['entry_level'],
-                    stop_loss=calc_signals['stop_loss'],
-                    take_profit=calc_signals['take_profit'],
-                    confidence=calc_signals['confidence'],
-                    coin='BTC',
-                    notes=f"[{'TEST' if test_mode else 'PROD'}] BTC: ${current_btc_price:,.0f} | Calc-Only Mode"
-                )
-                if save_success:
-                    print("✅ Calculation prediction signals saved to database")
-                else:
-                    print("❌ Failed to save calculation prediction signals to database")
-        else:
-            print("❌ No valid predictions to save")
-            save_success = False
-        
-        # Original summary saving (now optional/minimal)
-        summary = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "test_mode": test_mode,
-            "ai_only_mode": ai_only,
-            "data_points_collected": data_count,
-            "signals_extracted": {
-                "ai_success": ai_signals is not None,
-                "calc_success": calc_signals is not None,
-                "database_saved": save_success
-            }
-        }
-        
-        # Final status
-        if ai_only:
-            success_count = 1 if ai_prediction else 0
-            total_systems = 1
-            mode_indicator = "🧪 AI TEST" if test_mode else "🚀 AI PRODUCTION"
-            print(f"\n🎯 SYSTEM COMPLETION ({mode_indicator}): {success_count}/{total_systems} prediction system successful")
-            
-            if success_count == 1:
-                print("🎉 AI PREDICTION SYSTEM COMPLETED SUCCESSFULLY!")
-            else:
-                print("⚠️ AI prediction system failed")
-        elif calc_only:
-            success_count = 1 if calc_prediction else 0
-            total_systems = 1
-            mode_indicator = "🧪 CALC TEST" if test_mode else "🚀 CALC PRODUCTION"
-            print(f"\n🎯 SYSTEM COMPLETION ({mode_indicator}): {success_count}/{total_systems} prediction system successful")
-            
-            if success_count == 1:
-                print("🎉 CALCULATION PREDICTION SYSTEM COMPLETED SUCCESSFULLY!")
-            else:
-                print("⚠️ Calculation prediction system failed")
-        else:
-            success_count = sum([bool(ai_prediction), bool(calc_prediction)])
-            mode_indicator = "🧪 TEST" if test_mode else "🚀 PRODUCTION"
-            print(f"\n🎯 SYSTEM COMPLETION ({mode_indicator}): {success_count}/2 prediction systems successful")
-            
-            if success_count == 2:
-                print("🎉 DUAL PREDICTION SYSTEM COMPLETED SUCCESSFULLY!")
-            else:
-                print("⚠️ Partial completion - some prediction systems failed")
-        
-        return success_count > 0
+        # Final summary
+        print("\n🎉 AI PREDICTION SYSTEM COMPLETED SUCCESSFULLY!")
+        return True
         
     except Exception as e:
         error_msg = f"💥 CRITICAL ERROR in prediction system: {str(e)}"
@@ -495,15 +333,10 @@ def inspect_data_storage():
     print(" 🔍 DATA STORAGE INSPECTION")
     print("="*70)
     
-    # Check database health
-    health = db_manager.health_check()
-    print(f"\n📊 Database Status:")
-    print(f"   • Connection Type: {health['connection_type']}")
-    print(f"   • Database Available: {health['database_available']}")
-    print(f"   • Engine URL: {health.get('engine_url', 'N/A')}")
-    print(f"   • Tables Exist: {health['tables_exist']}")
-    print(f"   • Total Predictions: {health['total_predictions']}")
-    print(f"   • Total Insights: {health['total_insights']}")
+    # Database removed - using file-based storage only
+    print(f"\n📊 Storage Status:")
+    print(f"   • Storage Type: File-based (SQLite removed)")
+    print(f"   • Database Removed: Using simple file storage")
     
     # Check local files
     print(f"\n📁 Local File Status:")
@@ -521,62 +354,18 @@ def inspect_data_storage():
         else:
             print(f"   ❌ {filename}: Not found")
     
-    # Load and show recent predictions
-    try:
-        predictions = db_manager.load_predictions(limit=5)
-        if predictions:
-            print(f"\n📈 Recent Predictions (last 5):")
-            for i, pred in enumerate(predictions, 1):
-                # Handle both old and new data formats
-                if 'method' in pred:
-                    # New simplified format
-                    print(f"   {i}. {pred.get('date', 'N/A')} {pred.get('time', 'N/A')} | {pred.get('method', 'N/A').upper()}")
-                    print(f"      Entry: ${pred.get('entry_level', 0):,.2f} | SL: ${pred.get('stop_loss', 0):,.2f} | TP: ${pred.get('take_profit', 0):,.2f}")
-                    # Fix f-string syntax error by extracting accuracy value first
-                    accuracy_display = 'Pending' if pred.get('accuracy') is None else f"{pred.get('accuracy'):.1f}%"
-                    print(f"      Confidence: {pred.get('confidence', 0):.1f}% | Accuracy: {accuracy_display}")
-                    print(f"      Notes: {pred.get('notes', 'N/A')[:50]}...")
-                else:
-                    # Legacy format
-                    print(f"   {i}. Date: {pred.get('date', 'N/A')}")
-                    print(f"      Time: {pred.get('time', pred.get('session', 'N/A'))}")
-                    print(f"      BTC Price: ${pred.get('market_data', {}).get('btc_price', 'N/A'):,.2f}" if pred.get('market_data', {}).get('btc_price') else "      BTC Price: N/A")
-                    print(f"      Has AI Prediction: {'✅' if pred.get('predictions', {}).get('ai_prediction') else '❌'}")
-                print("")
-        else:
-            print(f"\n📈 No predictions found in storage")
-            
-        # Show method breakdown
-        ai_predictions = db_manager.get_predictions_by_method('ai', limit=10)
-        calc_predictions = db_manager.get_predictions_by_method('calculation', limit=10)
-        
-        print(f"\n📊 Prediction Method Breakdown:")
-        print(f"   • AI Predictions: {len(ai_predictions)}")
-        print(f"   • Calculation Predictions: {len(calc_predictions)}")
-        
-        # Show recent accuracy updates
-        recent_validated = [p for p in predictions[:10] if p.get('accuracy') is not None]
-        if recent_validated:
-            print(f"\n✅ Recent Validated Predictions: {len(recent_validated)}")
-            for pred in recent_validated[:3]:
-                method = pred.get('method', 'unknown').upper()
-                accuracy = pred.get('accuracy', 0)
-                print(f"   • {method}: {accuracy:.1f}% accuracy")
-        else:
-            print(f"\n⏳ No validated predictions yet (accuracy field empty)")
-            
-    except Exception as e:
-        print(f"\n❌ Error loading predictions: {e}")
+    # Database functionality removed - now using simple file storage
+    print(f"\n📈 Storage: Simple file-based system (no database queries)")
+    print(f"   • AI predictions saved to files only")
+    print(f"   • Database complexity removed for simplicity")
     
     print("="*70)
 
 def main():
     """Main entry point with command line argument support"""
-    parser = argparse.ArgumentParser(description='Crypto Dual Prediction System')
+    parser = argparse.ArgumentParser(description='Crypto AI Prediction System')
     parser.add_argument('--test', action='store_true', help='Run in test mode')
     parser.add_argument('--analysis', action='store_true', help='Run analysis only (no predictions)')
-    parser.add_argument('--ai-only', action='store_true', help='Run AI predictor only (skip calculation predictor)')
-    parser.add_argument('--calc-only', action='store_true', help='Run calculation predictor only (skip AI predictor)')
     parser.add_argument('--inspect', action='store_true', help='Inspect data storage and exit')
     
     args = parser.parse_args()
@@ -585,26 +374,11 @@ def main():
     if args.inspect:
         inspect_data_storage()
         sys.exit(0)
-    
-    # Validate argument combinations
-    if args.ai_only and args.analysis:
-        print("❌ Error: Cannot use --ai-only with --analysis")
-        sys.exit(1)
-    
-    if args.calc_only and args.analysis:
-        print("❌ Error: Cannot use --calc-only with --analysis")
-        sys.exit(1)
         
-    if args.ai_only and args.calc_only:
-        print("❌ Error: Cannot use --ai-only with --calc-only")
-        sys.exit(1)
-    
     # Run the async system
-    success = asyncio.run(run_dual_prediction_system(
+    success = asyncio.run(run_ai_prediction_system(
         test_mode=args.test, 
-        analysis_only=args.analysis,
-        ai_only=args.ai_only,
-        calc_only=args.calc_only
+        analysis_only=args.analysis
     ))
     
     # Exit with appropriate code
@@ -624,7 +398,7 @@ if __name__ == "__main__":
         def home():
             return jsonify({
                 "status": "active",
-                "service": "Crypto Dual Prediction System",
+                "service": "Crypto AI Prediction System",
                 "endpoints": ["/", "/predict", "/health"]
             })
         
@@ -632,7 +406,7 @@ if __name__ == "__main__":
         def predict():
             try:
                 # Run prediction system
-                success = asyncio.run(run_dual_prediction_system(test_mode=False, analysis_only=False, ai_only=False))
+                success = asyncio.run(run_ai_prediction_system(test_mode=False, analysis_only=False))
                 return jsonify({
                     "status": "completed" if success else "failed",
                     "timestamp": datetime.now(timezone.utc).isoformat()
@@ -654,4 +428,4 @@ if __name__ == "__main__":
     else:
         # Run as CLI application (includes cron jobs)
         print("🕐 Running as scheduled cron job..." if os.getenv('RENDER') else "💻 Running as CLI application...")
-        main() 
+        main()

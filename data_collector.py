@@ -7,6 +7,10 @@ import pandas as pd
 import time
 import concurrent.futures
 import yfinance as yf
+import numpy as np
+import hmac
+import hashlib
+from urllib.parse import urlencode
 from datetime import datetime, timedelta, timezone
 from bs4 import BeautifulSoup
 import re
@@ -14,6 +18,13 @@ import re
 class CryptoDataCollector:
     def __init__(self, config):
         self.config = config
+        # Enhanced API keys for new data sources
+        self.coinmarketcal_key = os.getenv("COINMARKETCAL_API_KEY")
+        self.news_api_key = os.getenv("NEWS_API_KEY") 
+        self.binance_api_key = os.getenv("BINANCE_API_KEY")
+        self.binance_secret = os.getenv("BINANCE_SECRET")
+        self.etherscan_api_key = os.getenv("ETHERSCAN_API_KEY")
+        self.polygon_api_key = os.getenv("POLYGON_API_KEY")
     
     def resilient_request(self, url, params=None, headers=None, max_retries=None, timeout=None):
         """Make resilient API requests with retries and error handling"""
@@ -26,13 +37,23 @@ class CryptoDataCollector:
             try:
                 response = requests.get(url, params=params, headers=headers, timeout=timeout)
                 
-                # Check for rate limiting
+                # Enhanced rate limiting protection
                 if response.status_code == 429:
                     retry_after = int(response.headers.get("Retry-After", 60))
-                    # Cap retry_after to prevent excessive delays on Render
-                    retry_after = min(retry_after, 120)  # Max 2 minutes
-                    print(f"[WARN] Rate limited, waiting {retry_after}s (attempt {attempt+1}/{max_retries})")
-                    time.sleep(retry_after)
+                    # Intelligent retry_after calculation
+                    if 'binance' in url.lower():
+                        retry_after = min(retry_after, 180)  # Binance: Max 3 minutes
+                    elif 'coingecko' in url.lower():
+                        retry_after = min(retry_after, 300)  # CoinGecko: Max 5 minutes
+                    else:
+                        retry_after = min(retry_after, 120)  # Others: Max 2 minutes
+                    
+                    # Add exponential backoff for repeated rate limits
+                    backoff_multiplier = 2 ** (attempt - 1) if attempt > 1 else 1
+                    actual_wait = min(retry_after * backoff_multiplier, 600)  # Max 10 minutes total
+                    
+                    print(f"[WARN] Rate limited on {url}, waiting {actual_wait}s (attempt {attempt+1}/{max_retries})")
+                    time.sleep(actual_wait)
                     continue
                     
                 # Check for other common status codes
@@ -864,8 +885,647 @@ class CryptoDataCollector:
         return historical_data
 
     # ----------------------------
-    # Main Data Collection
+    # NEW ENHANCED DATA COLLECTION  
     # ----------------------------
+    
+    def get_volatility_regime(self):
+        """Get current volatility regime for dynamic position sizing"""
+        print("[INFO] Collecting volatility regime analysis...")
+        
+        try:
+            # Get recent volatility data for BTC and ETH
+            symbols = ['BTCUSDT', 'ETHUSDT']
+            volatility_data = {}
+            
+            for symbol in symbols:
+                url = "https://api.binance.com/api/v3/klines"
+                params = {
+                    'symbol': symbol,
+                    'interval': '1h',
+                    'limit': 168  # 7 days of hourly data
+                }
+                
+                data = self.resilient_request(url, params)
+                if not data:
+                    continue
+                    
+                # Calculate hourly returns
+                closes = [float(candle[4]) for candle in data]
+                returns = [(closes[i] - closes[i-1]) / closes[i-1] for i in range(1, len(closes))]
+                
+                # Calculate rolling volatility (24h windows)
+                window_size = 24
+                volatilities = []
+                for i in range(window_size, len(returns)):
+                    window_returns = returns[i-window_size:i]
+                    volatility = np.std(window_returns) * np.sqrt(24)  # Annualized
+                    volatilities.append(volatility)
+                
+                current_volatility = volatilities[-1] if volatilities else 0
+                avg_volatility = np.mean(volatilities) if volatilities else 0
+                
+                coin = symbol.replace('USDT', '')
+                volatility_data[coin] = {
+                    'current_volatility': current_volatility,
+                    'average_volatility': avg_volatility,
+                    'volatility_ratio': current_volatility / avg_volatility if avg_volatility > 0 else 1.0
+                }
+            
+            # Calculate overall regime
+            if volatility_data:
+                # Use BTC as primary reference
+                btc_ratio = volatility_data.get('BTC', {}).get('volatility_ratio', 1.0)
+                eth_ratio = volatility_data.get('ETH', {}).get('volatility_ratio', 1.0)
+                avg_ratio = (btc_ratio + eth_ratio) / 2
+                
+                # Classify regime
+                if avg_ratio > 2.5:
+                    regime = "EXTREME"
+                    size_multiplier = 0.3
+                    risk_state = "VERY_HIGH"
+                elif avg_ratio > 1.8:
+                    regime = "HIGH"
+                    size_multiplier = 0.5
+                    risk_state = "HIGH"
+                elif avg_ratio > 1.3:
+                    regime = "ELEVATED"
+                    size_multiplier = 0.7
+                    risk_state = "MEDIUM_HIGH"
+                elif avg_ratio > 0.7:
+                    regime = "NORMAL"
+                    size_multiplier = 1.0
+                    risk_state = "NORMAL"
+                else:
+                    regime = "LOW"
+                    size_multiplier = 1.3
+                    risk_state = "LOW"
+                
+                return {
+                    'current_regime': regime,
+                    'size_multiplier': size_multiplier,
+                    'risk_state': risk_state,
+                    'volatility_ratio': avg_ratio,
+                    'btc_volatility': volatility_data.get('BTC', {}),
+                    'eth_volatility': volatility_data.get('ETH', {})
+                }
+        
+        except Exception as e:
+            print(f"[ERROR] Volatility regime calculation failed: {e}")
+        
+        # Return default regime if calculation fails
+        return {
+            'current_regime': 'NORMAL',
+            'size_multiplier': 1.0,
+            'risk_state': 'UNKNOWN',
+            'volatility_ratio': 1.0
+        }
+    
+    def get_order_book_analysis(self):
+        """Get advanced order book analysis for both BTC and ETH"""
+        print("[INFO] Collecting order book analysis...")
+        
+        if not self.binance_api_key or not self.binance_secret:
+            print("[WARN] ⚠️  Binance API keys not configured - Order book analysis unavailable")
+            return None
+        
+        try:
+            symbols = ['BTCUSDT', 'ETHUSDT']
+            order_book_data = {}
+            
+            for symbol in symbols:
+                url = "https://api.binance.com/api/v3/depth"
+                params = {'symbol': symbol, 'limit': 100}
+                
+                data = self.resilient_request(url, params)
+                if not data:
+                    continue
+                    
+                bids = [(float(bid[0]), float(bid[1])) for bid in data.get('bids', [])]
+                asks = [(float(ask[0]), float(ask[1])) for ask in data.get('asks', [])]
+                
+                if not bids or not asks:
+                    continue
+                    
+                current_price = (bids[0][0] + asks[0][0]) / 2
+                
+                # Calculate weighted book depth
+                bid_depth = sum(price * volume for price, volume in bids[:50])
+                ask_depth = sum(price * volume for price, volume in asks[:50])
+                total_depth = bid_depth + ask_depth
+                
+                imbalance_ratio = bid_depth / total_depth if total_depth > 0 else 0.5
+                
+                # Find significant walls
+                avg_bid_size = np.mean([vol for _, vol in bids[:20]])
+                avg_ask_size = np.mean([vol for _, vol in asks[:20]])
+                
+                bid_walls = [(price, vol) for price, vol in bids if vol > avg_bid_size * 10]
+                ask_walls = [(price, vol) for price, vol in asks if vol > avg_ask_size * 10]
+                
+                # Calculate support/resistance from walls
+                strong_support = min([price for price, vol in bid_walls], default=current_price * 0.99)
+                strong_resistance = max([price for price, vol in ask_walls], default=current_price * 1.01)
+                
+                # Market maker vs retail analysis
+                small_orders = sum(1 for _, vol in bids[:20] + asks[:20] if vol < 1.0)
+                large_orders = sum(1 for _, vol in bids[:20] + asks[:20] if vol > 10.0)
+                mm_dominance = large_orders / (small_orders + large_orders) if (small_orders + large_orders) > 0 else 0
+                
+                # Generate signal
+                if imbalance_ratio > 0.7:
+                    book_signal = "BULLISH"
+                elif imbalance_ratio < 0.3:
+                    book_signal = "BEARISH"
+                else:
+                    book_signal = "NEUTRAL"
+                
+                coin = symbol.replace('USDT', '')
+                order_book_data[coin] = {
+                    'current_price': current_price,
+                    'imbalance_ratio': imbalance_ratio,
+                    'bid_walls': len(bid_walls),
+                    'ask_walls': len(ask_walls),
+                    'strong_support': strong_support,
+                    'strong_resistance': strong_resistance,
+                    'mm_dominance': mm_dominance,
+                    'book_signal': book_signal
+                }
+            
+            return order_book_data if order_book_data else None
+            
+        except Exception as e:
+            print(f"[ERROR] Order book analysis failed: {e}")
+            return None
+
+    def get_liquidation_heatmap(self):
+        """Get liquidation heatmap for both BTC and ETH"""
+        print("[INFO] Collecting liquidation heatmap...")
+        
+        if not self.binance_api_key or not self.binance_secret:
+            print("[WARN] ⚠️  Binance API keys not configured - Liquidation heatmap unavailable")
+            return None
+        
+        try:
+            symbols = ['BTCUSDT', 'ETHUSDT']
+            liquidation_data = {}
+            
+            for symbol in symbols:
+                # Get current price
+                ticker_resp = self.resilient_request("https://api.binance.com/api/v3/ticker/price", 
+                                                   {'symbol': symbol})
+                current_price = float(ticker_resp['price']) if ticker_resp else 0
+                
+                # Get funding rate for liquidation pressure
+                funding_resp = self.resilient_request("https://fapi.binance.com/fapi/v1/premiumIndex", 
+                                                    {'symbol': symbol})
+                funding_rate = float(funding_resp.get('lastFundingRate', 0)) * 100 if funding_resp else 0
+                
+                # Get open interest
+                oi_resp = self.resilient_request("https://fapi.binance.com/fapi/v1/openInterest", 
+                                               {'symbol': symbol})
+                open_interest = float(oi_resp.get('openInterest', 0)) if oi_resp else 0
+                
+                # Calculate liquidation zones (simplified estimation)
+                leverage_levels = [10, 20, 50, 100]
+                liquidation_zones = []
+                
+                for leverage in leverage_levels:
+                    # Long liquidation (price moves down)
+                    long_liq_price = current_price * (1 - 0.9/leverage)
+                    # Short liquidation (price moves up)  
+                    short_liq_price = current_price * (1 + 0.9/leverage)
+                    
+                    liquidation_zones.append({
+                        'leverage': leverage,
+                        'long_liquidation': long_liq_price,
+                        'short_liquidation': short_liq_price
+                    })
+                
+                # Estimate liquidation pressure based on funding
+                if funding_rate > 0.05:
+                    liq_pressure = "HIGH_LONG_LIQUIDATION_RISK"
+                    pressure_score = 0.7
+                elif funding_rate < -0.05:
+                    liq_pressure = "HIGH_SHORT_LIQUIDATION_RISK"
+                    pressure_score = -0.7
+                elif abs(funding_rate) > 0.02:
+                    liq_pressure = "MODERATE_LIQUIDATION_RISK"
+                    pressure_score = 0.3 if funding_rate > 0 else -0.3
+                else:
+                    liq_pressure = "LOW_LIQUIDATION_RISK"
+                    pressure_score = 0.0
+                
+                # Find nearby magnet zones
+                nearby_long_liqs = [zone['long_liquidation'] for zone in liquidation_zones 
+                                  if abs(zone['long_liquidation'] - current_price) / current_price < 0.05]
+                nearby_short_liqs = [zone['short_liquidation'] for zone in liquidation_zones 
+                                   if abs(zone['short_liquidation'] - current_price) / current_price < 0.05]
+                
+                coin = symbol.replace('USDT', '')
+                liquidation_data[coin] = {
+                    'current_price': current_price,
+                    'funding_rate': funding_rate,
+                    'open_interest': open_interest,
+                    'liquidation_pressure': liq_pressure,
+                    'pressure_score': pressure_score,
+                    'nearby_long_liquidations': nearby_long_liqs,
+                    'nearby_short_liquidations': nearby_short_liqs
+                }
+            
+            return liquidation_data if liquidation_data else None
+            
+        except Exception as e:
+            print(f"[ERROR] Liquidation heatmap failed: {e}")
+            return None
+
+    def get_economic_calendar(self):
+        """Get economic calendar events from CoinMarketCal"""
+        print("[INFO] Collecting economic calendar events...")
+        
+        if not self.coinmarketcal_key:
+            print("[WARN] ⚠️  CoinMarketCal API key not configured - Economic calendar unavailable")
+            return None
+        
+        try:
+            url = "https://developers.coinmarketcal.com/v1/events"
+            
+            headers = {
+                'x-api-key': self.coinmarketcal_key,
+                'Accept': 'application/json',
+                'Accept-Encoding': 'deflate, gzip',
+                'User-Agent': 'Mozilla/5.0 (compatible; CryptoBot/1.0)'
+            }
+            
+            end_date = datetime.now() + timedelta(days=7)
+            params = {
+                'dateRangeStart': datetime.now().strftime('%Y-%m-%d'),
+                'dateRangeEnd': end_date.strftime('%Y-%m-%d'),
+                'sortBy': 'created_desc',
+                'max': 50
+            }
+            
+            data = self.resilient_request(url, params, headers)
+            if not data or 'body' not in data:
+                return None
+                
+            events = data['body']
+            if not isinstance(events, list):
+                return None
+            
+            # Process events
+            high_impact_events = []
+            medium_impact_events = []
+            crypto_specific_events = []
+            
+            now = datetime.now()
+            
+            for event in events:
+                try:
+                    title = event.get('title', {})
+                    if isinstance(title, dict):
+                        title_text = title.get('en', 'Unknown Event')
+                    else:
+                        title_text = str(title)
+                    
+                    date_str = event.get('date_event', '')
+                    try:
+                        event_date = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+                        event_date = event_date.replace(tzinfo=None)
+                    except:
+                        continue
+                    
+                    if event_date < now:
+                        continue
+                    
+                    percentage = float(event.get('percentage', 0))
+                    hot_score = float(event.get('hot_score', 0))
+                    votes = int(event.get('votes', 0))
+                    
+                    impact_score = (percentage * 0.4) + (hot_score * 0.4) + (min(votes, 100) * 0.2)
+                    
+                    coins = event.get('coins', [])
+                    is_crypto_specific = any('bitcoin' in str(coin).lower() or 'ethereum' in str(coin).lower() 
+                                           for coin in coins) if coins else False
+                    
+                    event_data = {
+                        'title': title_text,
+                        'date': date_str,
+                        'event_date': event_date,
+                        'impact_score': impact_score,
+                        'is_crypto_specific': is_crypto_specific,
+                        'days_ahead': (event_date - now).days
+                    }
+                    
+                    if impact_score > 70 or percentage > 80:
+                        high_impact_events.append(event_data)
+                    elif impact_score > 40 or percentage > 50:
+                        medium_impact_events.append(event_data)
+                        
+                    if is_crypto_specific:
+                        crypto_specific_events.append(event_data)
+                        
+                except Exception:
+                    continue
+            
+            # Generate recommendation
+            recommendation = "NORMAL_TRADING"
+            if any(e['days_ahead'] <= 1 for e in high_impact_events):
+                recommendation = "AVOID_TRADING_HIGH_VOLATILITY"
+            elif any(e['days_ahead'] <= 2 for e in high_impact_events):
+                recommendation = "REDUCE_POSITION_SIZE"
+            elif len(medium_impact_events) > 3:
+                recommendation = "MONITOR_CLOSELY"
+            
+            return {
+                'total_events': len(events),
+                'high_impact': len(high_impact_events),
+                'medium_impact': len(medium_impact_events),
+                'crypto_specific': len(crypto_specific_events),
+                'recommendation': recommendation,
+                'next_high_impact': high_impact_events[0] if high_impact_events else None
+            }
+            
+        except Exception as e:
+            print(f"[ERROR] Economic calendar failed: {e}")
+            return None
+
+    def get_multi_source_sentiment(self):
+        """Get sentiment analysis from multiple sources"""
+        print("[INFO] Collecting multi-source sentiment...")
+        
+        if not self.news_api_key:
+            print("[WARN] ⚠️  News API key not configured - Limited sentiment analysis available")
+        
+        try:
+            sentiment_scores = []
+            
+            # News sentiment
+            try:
+                if self.news_api_key:
+                    news_url = "https://newsapi.org/v2/everything"
+                    news_params = {
+                        'q': 'bitcoin OR cryptocurrency',
+                        'language': 'en',
+                        'sortBy': 'publishedAt',
+                        'pageSize': 20,
+                        'apiKey': self.news_api_key
+                    }
+                    
+                    news_data = self.resilient_request(news_url, news_params)
+                    if news_data and 'articles' in news_data:
+                        news_sentiment = self._analyze_news_sentiment(news_data['articles'])
+                        sentiment_scores.append(('news', news_sentiment))
+                
+            except Exception as e:
+                print(f"[WARN] News sentiment failed: {e}")
+            
+            # Market-based sentiment
+            try:
+                social_sentiment = self._analyze_market_sentiment()
+                if social_sentiment is not None:
+                    sentiment_scores.append(('social', social_sentiment))
+            except Exception as e:
+                print(f"[WARN] Social sentiment failed: {e}")
+            
+            # Fear & Greed as market sentiment
+            try:
+                fg_data = self.get_fear_greed_index()
+                if fg_data and fg_data.get('index'):
+                    fg_normalized = (fg_data['index'] - 50) / 50
+                    sentiment_scores.append(('market', fg_normalized))
+            except Exception as e:
+                print(f"[WARN] Market sentiment failed: {e}")
+            
+            if not sentiment_scores:
+                return None
+            
+            # Calculate weighted average sentiment
+            avg_sentiment = sum(score for _, score in sentiment_scores) / len(sentiment_scores)
+            
+            if avg_sentiment > 0.3:
+                sentiment_signal = "BULLISH"
+            elif avg_sentiment < -0.3:
+                sentiment_signal = "BEARISH"
+            else:
+                sentiment_signal = "NEUTRAL"
+            
+            return {
+                'sources_analyzed': len(sentiment_scores),
+                'average_sentiment': avg_sentiment,
+                'sentiment_signal': sentiment_signal,
+                'source_breakdown': dict(sentiment_scores)
+            }
+            
+        except Exception as e:
+            print(f"[ERROR] Multi-source sentiment failed: {e}")
+            return None
+
+    def _analyze_news_sentiment(self, articles):
+        """Analyze sentiment from news articles"""
+        if not articles:
+            return 0.0
+        
+        try:
+            positive_keywords = ['bull', 'bullish', 'surge', 'rally', 'gains', 'breakout', 'adoption', 'institutional']
+            negative_keywords = ['bear', 'bearish', 'crash', 'dump', 'decline', 'regulatory', 'ban', 'hack']
+            
+            sentiment_scores = []
+            
+            for article in articles[:10]:
+                title = article.get('title', '').lower()
+                description = article.get('description', '').lower()
+                text = f"{title} {description}"
+                
+                positive_count = sum(1 for word in positive_keywords if word in text)
+                negative_count = sum(1 for word in negative_keywords if word in text)
+                
+                if positive_count > 0 or negative_count > 0:
+                    score = (positive_count - negative_count) / (positive_count + negative_count)
+                    sentiment_scores.append(score)
+            
+            return np.mean(sentiment_scores) if sentiment_scores else 0.0
+            
+        except Exception:
+            return 0.0
+
+    def _analyze_market_sentiment(self):
+        """Analyze market-based sentiment indicators"""
+        try:
+            futures_data = self.get_futures_sentiment()
+            if not futures_data:
+                return None
+            
+            sentiment_indicators = []
+            
+            # BTC funding rate sentiment
+            btc_funding = futures_data.get('BTC', {}).get('funding_rate', 0)
+            if btc_funding:
+                funding_sentiment = -btc_funding * 20
+                sentiment_indicators.append(funding_sentiment)
+            
+            # Long/Short ratio sentiment (contrarian)
+            btc_futures = futures_data.get('BTC', {})
+            if btc_futures.get('long_ratio') and btc_futures.get('short_ratio'):
+                ls_ratio = btc_futures['long_ratio'] / (btc_futures['short_ratio'] + 1e-6)
+                if ls_ratio > 1.5:
+                    ratio_sentiment = -0.3
+                elif ls_ratio < 0.7:
+                    ratio_sentiment = 0.3
+                else:
+                    ratio_sentiment = 0.0
+                sentiment_indicators.append(ratio_sentiment)
+            
+            return np.mean(sentiment_indicators) if sentiment_indicators else 0.0
+            
+        except Exception:
+            return None
+
+    def get_whale_movements(self):
+        """Get whale movement alerts and smart money tracking"""
+        print("[INFO] Collecting whale movement data...")
+        
+        if not self.etherscan_api_key:
+            print("[WARN] ⚠️  Etherscan API key not configured - Limited whale tracking available")
+        
+        try:
+            whale_signals = []
+            
+            # Large trades detection
+            large_trades_data = self._detect_large_trades()
+            if large_trades_data:
+                # Aggregate activity across BTC and ETH
+                activities = [data.get('activity', 'UNKNOWN') for data in large_trades_data.values()]
+                # Use the highest activity level
+                if 'HIGH_WHALE_ACTIVITY' in activities:
+                    overall_activity = 'HIGH_WHALE_ACTIVITY'
+                    overall_sentiment = 0.2
+                elif 'MODERATE_WHALE_ACTIVITY' in activities:
+                    overall_activity = 'MODERATE_WHALE_ACTIVITY'
+                    overall_sentiment = 0.1
+                else:
+                    overall_activity = 'LOW_WHALE_ACTIVITY'
+                    overall_sentiment = 0.0
+                
+                large_trades_summary = {
+                    'activity': overall_activity,
+                    'sentiment': overall_sentiment,
+                    'coins_analyzed': list(large_trades_data.keys()),
+                    'total_large_trades': sum(data.get('large_trades_count', 0) for data in large_trades_data.values())
+                }
+                whale_signals.append(('large_trades', large_trades_summary))
+            
+            # Exchange flow analysis
+            exchange_flows_data = self._analyze_exchange_flows()
+            if exchange_flows_data:
+                whale_signals.append(('exchange_flows', exchange_flows_data))
+            
+            if not whale_signals:
+                return None
+            
+            # Aggregate whale sentiment
+            total_sentiment = sum(data.get('sentiment', 0) for _, data in whale_signals)
+            avg_sentiment = total_sentiment / len(whale_signals)
+            
+            if avg_sentiment > 0.3:
+                whale_signal = "WHALES_ACCUMULATING"
+            elif avg_sentiment < -0.3:
+                whale_signal = "WHALES_DISTRIBUTING"
+            else:
+                whale_signal = "WHALE_NEUTRAL"
+            
+            return {
+                'signals_detected': len(whale_signals),
+                'whale_sentiment': avg_sentiment,
+                'whale_signal': whale_signal,
+                'breakdown': dict(whale_signals)  # Now returns {'large_trades': {'activity': '...', 'sentiment': 0.2}, 'exchange_flows': {'activity': '...', 'sentiment': 0.3}}
+            }
+            
+        except Exception as e:
+            print(f"[ERROR] Whale movements failed: {e}")
+            return None
+
+    def _detect_large_trades(self):
+        """Detect large trades that might indicate whale activity"""
+        try:
+            # Get data for both BTC and ETH
+            symbols = ['BTCUSDT', 'ETHUSDT']
+            whale_data = {}
+            
+            for symbol in symbols:
+                url = "https://api.binance.com/api/v3/aggTrades"
+                params = {'symbol': symbol, 'limit': 500}
+            
+                data = self.resilient_request(url, params)
+                if not data:
+                    continue
+                
+                trade_sizes = []
+                for trade in data:
+                    price = float(trade['p'])
+                    quantity = float(trade['q'])
+                    value_usd = price * quantity
+                    trade_sizes.append(value_usd)
+                
+                whale_threshold = np.percentile(trade_sizes, 95)
+                large_trades = [size for size in trade_sizes if size > whale_threshold]
+                
+                if len(large_trades) > 0:
+                    if len(large_trades) > len(trade_sizes) * 0.1:
+                        activity = "HIGH_WHALE_ACTIVITY"
+                        sentiment = 0.2
+                    elif len(large_trades) > len(trade_sizes) * 0.05:
+                        activity = "MODERATE_WHALE_ACTIVITY"
+                        sentiment = 0.1
+                    else:
+                        activity = "LOW_WHALE_ACTIVITY"
+                        sentiment = 0.0
+                    
+                    coin = symbol.replace('USDT', '')
+                    whale_data[coin] = {
+                        'activity': activity,
+                        'large_trades_count': len(large_trades),
+                        'whale_threshold': whale_threshold,
+                        'sentiment': sentiment
+                    }
+            
+            return whale_data if whale_data else None
+            
+        except Exception:
+            return None
+
+    def _analyze_exchange_flows(self):
+        """Analyze exchange inflows/outflows"""
+        try:
+            url = "https://api.binance.com/api/v3/ticker/24hr"
+            params = {'symbol': 'BTCUSDT'}
+            
+            data = self.resilient_request(url, params)
+            if not data:
+                return None
+            
+            volume_24h = float(data['volume'])
+            price_change = float(data['priceChangePercent'])
+            
+            if volume_24h > 20000 and price_change > 2:
+                activity = "POSSIBLE_ACCUMULATION"
+                sentiment = 0.3
+            elif volume_24h > 20000 and price_change < -2:
+                activity = "POSSIBLE_DISTRIBUTION"
+                sentiment = -0.3
+            else:
+                activity = "NORMAL_FLOWS"
+                sentiment = 0.0
+            
+            return {
+                'activity': activity,
+                'volume_24h': volume_24h,
+                'price_change': price_change,
+                'sentiment': sentiment
+            }
+            
+        except Exception:
+            return None
+
     def _log_data_verbose(self, results):
         """Log all collected data points with actual values for debugging"""
         print("\n" + "="*80)
@@ -1066,11 +1726,84 @@ class CryptoDataCollector:
             else:
                 print(f"  {coin}: ❌ MISSING")
         
+        # Volatility Regime (NEW)
+        volatility_regime = results.get("volatility_regime", {})
+        print("\n🌊 VOLATILITY REGIME:")
+        if volatility_regime:
+            print(f"  Current Regime: {volatility_regime.get('current_regime', 'N/A')}")
+            print(f"  Position Size Multiplier: {volatility_regime.get('size_multiplier', 1.0):.1f}x")
+            print(f"  Risk State: {volatility_regime.get('risk_state', 'N/A')}")
+            print(f"  Volatility Ratio: {volatility_regime.get('volatility_ratio', 1.0):.2f}")
+        else:
+            print("  ❌ VOLATILITY REGIME MISSING")
+        
+        # Enhanced Data Sources (NEW)
+        print("\n🚀 ENHANCED DATA SOURCES:")
+        
+        # Order Book Analysis
+        order_book = results.get("order_book_analysis", {})
+        if order_book:
+            print(f"  📊 Order Book Analysis: ✅ ACTIVE")
+            for coin in ['BTC', 'ETH']:
+                coin_data = order_book.get(coin, {})
+                if coin_data:
+                    print(f"    {coin}: {coin_data.get('book_signal', 'N/A')} | Imbalance: {coin_data.get('imbalance_ratio', 0)*100:.1f}% bids | MM: {coin_data.get('mm_dominance', 0)*100:.1f}%")
+        else:
+            print(f"  📊 Order Book Analysis: ❌ BINANCE API KEYS REQUIRED")
+        
+        # Liquidation Heatmap
+        liquidation_map = results.get("liquidation_heatmap", {})
+        if liquidation_map:
+            print(f"  🔥 Liquidation Heatmap: ✅ ACTIVE")
+            for coin in ['BTC', 'ETH']:
+                coin_data = liquidation_map.get(coin, {})
+                if coin_data:
+                    print(f"    {coin}: {coin_data.get('liquidation_pressure', 'N/A')} | Funding: {coin_data.get('funding_rate', 0):.4f}% | Long zones: {len(coin_data.get('nearby_long_liquidations', []))} | Short zones: {len(coin_data.get('nearby_short_liquidations', []))}")
+        else:
+            print(f"  🔥 Liquidation Heatmap: ❌ BINANCE API KEYS REQUIRED")
+        
+        # Economic Calendar
+        economic_cal = results.get("economic_calendar", {})
+        if economic_cal:
+            print(f"  📅 Economic Calendar: ✅ ACTIVE")
+            print(f"    Recommendation: {economic_cal.get('recommendation', 'N/A')}")
+            print(f"    High Impact Events: {economic_cal.get('high_impact', 0)}")
+            next_event = economic_cal.get('next_high_impact', {})
+            if next_event:
+                print(f"    Next Major Event: {next_event.get('title', 'N/A')[:50]}")
+        else:
+            print(f"  📅 Economic Calendar: ❌ COINMARKETCAL API KEY REQUIRED")
+        
+        # Multi-Source Sentiment
+        multi_sentiment = results.get("multi_source_sentiment", {})
+        if multi_sentiment:
+            print(f"  🐦 Multi-Source Sentiment: ✅ ACTIVE")
+            print(f"    Sentiment Signal: {multi_sentiment.get('sentiment_signal', 'N/A')}")
+            print(f"    Sources Analyzed: {multi_sentiment.get('sources_analyzed', 0)}")
+            print(f"    Average Sentiment: {multi_sentiment.get('average_sentiment', 0):.2f}")
+        else:
+            print(f"  🐦 Multi-Source Sentiment: ⚠️  Limited data - needs NEWS API KEY for full analysis")
+        
+        # Whale Movements
+        whale_data = results.get("whale_movements", {})
+        if whale_data:
+            print(f"  🐋 Whale Movements: ✅ ACTIVE")
+            print(f"    Whale Signal: {whale_data.get('whale_signal', 'N/A')}")
+            print(f"    Whale Sentiment: {whale_data.get('whale_sentiment', 0):.2f}")
+            print(f"    Active Signals: {whale_data.get('signals_detected', 0)}")
+            breakdown = whale_data.get('breakdown', {})
+            if breakdown:
+                for source, data in breakdown.items():
+                    if isinstance(data, dict) and 'activity' in data:
+                        print(f"    {source}: {data['activity']}")
+        else:
+            print(f"  🐋 Whale Movements: ⚠️  Limited data - needs ETHERSCAN API KEY for full tracking")
+        
         print("\n" + "="*80)
         
         # Accurate data count
         total_collected = self._count_data_points(results)
-        total_possible = 47
+        total_possible = 54  # Updated from 53 to 54
         missing_count = total_possible - total_collected
         
         print(f"📊 DATA SUMMARY: {total_collected}/{total_possible} data points collected")
@@ -1094,7 +1827,8 @@ class CryptoDataCollector:
             "market_cap": self.get_global_market_cap,
             "volumes": self.get_trading_volumes,
             "technical_indicators": self.get_technical_indicators,
-            "historical_data": self.get_historical_price_data
+            "historical_data": self.get_historical_price_data,
+            "volatility_regime": self.get_volatility_regime  # NEW: Added volatility regime
         }
         
         if self.config["indicators"].get("include_macroeconomic", True):
@@ -1113,6 +1847,36 @@ class CryptoDataCollector:
         if self.config["indicators"].get("include_social_metrics", True):
             data_tasks["social_metrics"] = self.get_crypto_social_metrics
         
+        # NEW ENHANCED DATA SOURCES - WITH API KEY VALIDATION
+        if self.config["indicators"].get("include_enhanced_data", True):
+            enhanced_data_tasks = {}
+            
+            # Only add if API keys available
+            if self.binance_api_key and self.binance_secret:
+                enhanced_data_tasks.update({
+                    "order_book_analysis": self.get_order_book_analysis,
+                    "liquidation_heatmap": self.get_liquidation_heatmap
+                })
+            else:
+                print("[WARN] ⚠️ Binance API keys missing - Order book and liquidation analysis disabled")
+            
+            if self.coinmarketcal_key:
+                enhanced_data_tasks["economic_calendar"] = self.get_economic_calendar
+            else:
+                print("[WARN] ⚠️ CoinMarketCal API key missing - Economic calendar disabled")
+            
+            if self.news_api_key:
+                enhanced_data_tasks["multi_source_sentiment"] = self.get_multi_source_sentiment
+            else:
+                print("[WARN] ⚠️ News API key missing - Full sentiment analysis disabled")
+            
+            if self.etherscan_api_key:
+                enhanced_data_tasks["whale_movements"] = self.get_whale_movements
+            else:
+                print("[WARN] ⚠️ Etherscan API key missing - Whale tracking disabled")
+            
+            data_tasks.update(enhanced_data_tasks)
+        
         results = {}
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(data_tasks)) as executor:
             future_to_task = {executor.submit(func): task_name for task_name, func in data_tasks.items()}
@@ -1128,10 +1892,10 @@ class CryptoDataCollector:
         
         # Count successful data points - ACCURATE COUNT
         data_points_collected = self._count_data_points(results)
-        print(f"\n[INFO] 📊 Data collection complete: {data_points_collected}/47 data points")
+        print(f"\n[INFO] 📊 Data collection complete: {data_points_collected}/54 data points")  # Updated from 53 to 54
         
         # Show missing data points for debugging
-        if data_points_collected < 47:
+        if data_points_collected < 54:  # Updated from 53 to 54
             missing_points = []
             
             # Check each category
@@ -1192,11 +1956,30 @@ class CryptoDataCollector:
             if not historical.get("BTC"): missing_points.append("BTC historical data")
             if not historical.get("ETH"): missing_points.append("ETH historical data")
             
+            # Check volatility regime
+            if not results.get("volatility_regime"): missing_points.append("Volatility regime")
+            
+            # Check new enhanced data sources
+            if not results.get("order_book_analysis"): missing_points.append("Order book analysis")
+            if not results.get("liquidation_heatmap"): missing_points.append("Liquidation heatmap")
+            if not results.get("economic_calendar"): missing_points.append("Economic calendar")
+            if not results.get("multi_source_sentiment"): missing_points.append("Multi-source sentiment")
+            if not results.get("whale_movements"): missing_points.append("Whale movements")
+            
             if missing_points:
                 print(f"[WARN] Missing data points: {', '.join(missing_points[:10])}")
                 if len(missing_points) > 10:
                     print(f"[WARN] ... and {len(missing_points) - 10} more")
         
+        # Validate data consistency
+        validation_issues = self._validate_data_consistency(results)
+        if validation_issues:
+            print(f"\n[WARN] 🔍 Data validation found {len(validation_issues)} potential issues:")
+            for issue in validation_issues[:5]:  # Show first 5 issues
+                print(f"  • {issue}")
+            if len(validation_issues) > 5:
+                print(f"  • ... and {len(validation_issues) - 5} more issues")
+
         # Add verbose logging
         self._log_data_verbose(results)
         
@@ -1275,7 +2058,87 @@ class CryptoDataCollector:
         if historical.get("BTC"): count += 1
         if historical.get("ETH"): count += 1
         
+        # 11. Volatility Regime (1 point: market-wide) - NEW
+        if results.get("volatility_regime"): count += 1
+        
+        # 12. NEW ENHANCED DATA SOURCES (9 points total)
+        # Order Book Analysis (2 points: BTC + ETH)
+        order_book = results.get("order_book_analysis", {})
+        if order_book.get("BTC"): count += 1
+        if order_book.get("ETH"): count += 1
+        
+        # Liquidation Heatmap (2 points: BTC + ETH)
+        liquidation = results.get("liquidation_heatmap", {})
+        if liquidation.get("BTC"): count += 1
+        if liquidation.get("ETH"): count += 1
+        
+        # Economic Calendar (1 point: market-wide)
+        if results.get("economic_calendar"): count += 1
+        
+        # Multi-Source Sentiment (1 point: market-wide)
+        if results.get("multi_source_sentiment"): count += 1
+        
+        # Whale Movements (2 points: BTC + ETH)
+        whale_data = results.get("whale_movements", {})
+        if whale_data and whale_data.get('breakdown'):
+            breakdown = whale_data.get('breakdown', {})
+            if breakdown.get('large_trades'): count += 1
+            if breakdown.get('exchange_flows'): count += 1
+        
         return count
+
+    def _validate_data_consistency(self, results):
+        """Validate data consistency across sources"""
+        validation_issues = []
+        
+        try:
+            # Check price consistency
+            crypto_btc = results.get("crypto", {}).get("btc")
+            tech_btc = results.get("technical_indicators", {}).get("BTC", {}).get("price")
+            
+            if crypto_btc and tech_btc:
+                price_diff = abs(crypto_btc - tech_btc) / crypto_btc
+                if price_diff > 0.05:  # 5% difference threshold
+                    validation_issues.append(f"BTC price inconsistency: CoinGecko ${crypto_btc:,.0f} vs Binance ${tech_btc:,.0f} ({price_diff*100:.1f}% diff)")
+            
+            # Check volume consistency
+            volumes = results.get("volumes", {})
+            if volumes.get("btc_volume") and volumes.get("eth_volume"):
+                btc_vol = volumes["btc_volume"]
+                eth_vol = volumes["eth_volume"] 
+                vol_ratio = btc_vol / eth_vol if eth_vol > 0 else 0
+                
+                # BTC volume should typically be 1.5-4x ETH volume
+                if vol_ratio < 1.0 or vol_ratio > 6.0:
+                    validation_issues.append(f"Unusual BTC/ETH volume ratio: {vol_ratio:.1f}x (typical range: 1.5-4x)")
+            
+            # Check futures data consistency
+            futures = results.get("futures", {})
+            btc_funding = futures.get("BTC", {}).get("funding_rate")
+            eth_funding = futures.get("ETH", {}).get("funding_rate") 
+            
+            if btc_funding is not None and eth_funding is not None:
+                funding_diff = abs(btc_funding - eth_funding)
+                if funding_diff > 0.1:  # 0.1% difference threshold
+                    validation_issues.append(f"Large BTC/ETH funding rate divergence: {funding_diff:.3f}% difference")
+            
+            # Check sentiment consistency
+            fear_greed = results.get("fear_greed", {}).get("index", 50)
+            multi_sentiment = results.get("multi_source_sentiment", {})
+            
+            if multi_sentiment and multi_sentiment.get("average_sentiment") is not None:
+                # Convert fear/greed to -1 to 1 scale
+                fg_normalized = (fear_greed - 50) / 50
+                multi_sent = multi_sentiment["average_sentiment"]
+                
+                # Check if they're pointing in opposite directions
+                if (fg_normalized > 0.3 and multi_sent < -0.3) or (fg_normalized < -0.3 and multi_sent > 0.3):
+                    validation_issues.append(f"Sentiment conflict: F&G {fear_greed} vs Multi-source {multi_sent:.2f}")
+            
+            return validation_issues
+            
+        except Exception as e:
+            return [f"Validation check failed: {str(e)}"]
 
     def validate_market_data(self, market_data):
         """Validate that essential market data is present"""
@@ -1356,7 +2219,8 @@ if __name__ == "__main__":
             "include_macroeconomic": True,
             "include_stock_indices": True,
             "include_commodities": True,
-            "include_social_metrics": True
+            "include_social_metrics": True,
+            "include_enhanced_data": True
         }
     }
     
@@ -1364,4 +2228,4 @@ if __name__ == "__main__":
     results = collector.collect_all_data()
     
     print(f"\nData collection test complete!")
-    print(f"Results keys: {list(results.keys())}") 
+    print(f"Results keys: {list(results.keys())}")

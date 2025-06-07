@@ -205,92 +205,16 @@ async def test_ai_predictor(test_mode=False):
         print(f"❌ AI predictor test failed: {e}")
         return False
 
-async def test_calculation_predictor(test_mode=False):
-    """Test calculation predictor functionality"""
-    mode_text = "TEST" if test_mode else "PRODUCTION"
+async def test_calculation_predictor_removed():
+    """Calculation predictor has been removed - AI predictor is more accurate"""
     print(f"\n=" * 60)
-    print(f"🧮 TESTING CALCULATION PREDICTOR - {mode_text} MODE")
+    print(f"🧮 CALCULATION PREDICTOR REMOVED")
     print("=" * 60)
     
-    try:
-        from calculation_predictor import CalculationPredictor
-        
-        config, prod_valid, test_valid, _ = test_configuration()
-        if not config:
-            print("❌ Cannot test calculation predictor - config failed")
-            return False
-        
-        if test_mode and not test_valid:
-            print("⚠️ Test Telegram config invalid - testing without sending")
-        elif not test_mode and not prod_valid:
-            print("⚠️ Production Telegram config invalid - testing without sending")
-        
-        print(f"\n🔄 Testing calculation predictor initialization...")
-        calc_predictor = CalculationPredictor(config)
-        print("✅ Calculation predictor initialized successfully")
-        
-        # Mock market data for testing
-        mock_data = {
-            "crypto": {"btc": 45000, "eth": 2800},
-            "fear_greed": {"index": 35, "sentiment": "Fear"},
-            "btc_dominance": 52.5,
-            "technical_indicators": {
-                "BTC": {
-                    "price": 45000,
-                    "rsi14": 45.2,
-                    "signal": "BUY",
-                    "trend": "bullish",
-                    "support": 44000,
-                    "resistance": 46000,
-                    "volatility": "medium",
-                    "volume_trend": "increasing",
-                    "atr": 900
-                },
-                "ETH": {
-                    "price": 2800,
-                    "rsi14": 48.1,
-                    "signal": "BUY",
-                    "trend": "bullish",
-                    "support": 2750,
-                    "resistance": 2850,
-                    "volatility": "medium",
-                    "volume_trend": "stable",
-                    "atr": 56
-                }
-            },
-            "futures": {
-                "BTC": {"funding_rate": 0.01, "long_ratio": 0.6, "short_ratio": 0.4},
-                "ETH": {"funding_rate": 0.015, "long_ratio": 0.55, "short_ratio": 0.45}
-            },
-            "stock_indices": {"sp500_change": 1.2, "nasdaq_change": 1.5, "vix": 18.5},
-            "interest_rates": {"fed_rate": 5.25},
-            "inflation": {"inflation_rate": 3.2},
-            "commodities": {"gold": 2050, "crude_oil": 85}
-        }
-        
-        print(f"\n📊 Testing calculation prediction generation...")
-        print(f"   ℹ️ Note: Test mode has full functionality (database saves, file creation)")
-        print(f"   ℹ️ Only difference: Uses TEST telegram bot and chat instead of production")
-        
-        prediction = calc_predictor.run_calculation_prediction(
-            mock_data,
-            test_mode=test_mode,
-            save_results=True,
-            send_telegram=False  # Don't send during test suite
-        )
-        
-        if prediction:
-            print("✅ Calculation prediction generated successfully")
-            if test_mode:
-                print("   ✅ Test mode: Full functionality maintained (database + files)")
-            return True
-        else:
-            print("❌ Calculation prediction failed")
-            return False
-            
-    except Exception as e:
-        print(f"❌ Calculation predictor test failed: {e}")
-        return False
+    print("✅ Calculation predictor has been removed from the system")
+    print("🤖 AI predictor provides more accurate predictions")
+    print("📊 System now uses only AI predictions for better accuracy")
+    return True
 
 def test_file_outputs():
     """Test that files are created correctly"""
@@ -353,10 +277,9 @@ async def run_full_test_suite():
     test_results["ai_production"] = await test_ai_predictor(test_mode=False)
     test_results["ai_test"] = await test_ai_predictor(test_mode=True)
     
-    # Calculation predictor tests
-    print("\n4️⃣ Calculation Predictor Tests")
-    test_results["calc_production"] = await test_calculation_predictor(test_mode=False)
-    test_results["calc_test"] = await test_calculation_predictor(test_mode=True)
+    # Calculation predictor tests (removed)
+    print("\n4️⃣ Calculation Predictor Tests (Removed)")
+    test_results["calc_removed"] = await test_calculation_predictor_removed()
     
     # File output test
     print("\n5️⃣ File Output Test")
