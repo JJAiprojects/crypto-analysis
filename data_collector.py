@@ -1563,21 +1563,23 @@ class CryptoDataCollector:
         print("📊 DETAILED DATA COLLECTION RESULTS")
         print("="*80)
         
-        # Crypto Prices
-        crypto = results.get("crypto", {})
-        print("\n💰 CRYPTO PRICES:")
-        if crypto.get("btc"):
-            print(f"  BTC: ${crypto['btc']:,.2f}")
+        # Crypto Prices - USE SAME SOURCE AS AI PROMPT (technical indicators)
+        tech = results.get("technical_indicators", {})
+        print("\n💰 CRYPTO PRICES (from technical analysis - same as AI prompt):")
+        btc_data = tech.get("BTC", {})
+        eth_data = tech.get("ETH", {})
+        
+        if btc_data and btc_data.get("price"):
+            print(f"  BTC: ${btc_data['price']:,.2f}")
         else:
             print("  BTC: ❌ MISSING")
             
-        if crypto.get("eth"):
-            print(f"  ETH: ${crypto['eth']:,.2f}")
+        if eth_data and eth_data.get("price"):
+            print(f"  ETH: ${eth_data['price']:,.2f}")
         else:
             print("  ETH: ❌ MISSING")
             
         # Technical Indicators
-        tech = results.get("technical_indicators", {})
         print("\n📈 TECHNICAL ANALYSIS:")
         for coin in ["BTC", "ETH"]:
             coin_data = tech.get(coin, {})
@@ -1757,94 +1759,62 @@ class CryptoDataCollector:
             else:
                 print(f"  {coin}: ❌ MISSING")
         
-        # Volatility Regime (NEW)
-        volatility_regime = results.get("volatility_regime", {})
-        print("\n🌊 VOLATILITY REGIME:")
-        if volatility_regime:
-            print(f"  Current Regime: {volatility_regime.get('current_regime', 'N/A')}")
-            print(f"  Position Size Multiplier: {volatility_regime.get('size_multiplier', 1.0):.1f}x")
-            print(f"  Risk State: {volatility_regime.get('risk_state', 'N/A')}")
-            print(f"  Volatility Ratio: {volatility_regime.get('volatility_ratio', 1.0):.2f}")
-        else:
-            print("  ❌ VOLATILITY REGIME MISSING")
+        # Enhanced Data Sources
+        print("\n🔧 ENHANCED DATA SOURCES:")
         
-        # Enhanced Data Sources (NEW)
-        print("\n🚀 ENHANCED DATA SOURCES:")
+        # Volatility Regime
+        volatility = results.get("volatility_regime", {})
+        if volatility:
+            print(f"  Volatility Regime: {volatility.get('current_regime', 'N/A')} (multiplier: {volatility.get('size_multiplier', 1.0):.1f}x)")
+        else:
+            print("  Volatility Regime: ❌ MISSING")
         
         # Order Book Analysis
         order_book = results.get("order_book_analysis", {})
         if order_book:
-            print(f"  📊 Order Book Analysis: ✅ ACTIVE")
-            for coin in ['BTC', 'ETH']:
+            for coin in ["BTC", "ETH"]:
                 coin_data = order_book.get(coin, {})
                 if coin_data:
-                    print(f"    {coin}: {coin_data.get('book_signal', 'N/A')} | Imbalance: {coin_data.get('imbalance_ratio', 0)*100:.1f}% bids | MM: {coin_data.get('mm_dominance', 0)*100:.1f}%")
+                    print(f"  {coin} Order Book: {coin_data.get('book_signal', 'N/A')} | Imbalance: {coin_data.get('imbalance_ratio', 0)*100:.1f}%")
+                else:
+                    print(f"  {coin} Order Book: ❌ MISSING")
         else:
-            print(f"  📊 Order Book Analysis: ❌ BINANCE API KEYS REQUIRED")
+            print("  Order Book Analysis: ❌ MISSING")
         
         # Liquidation Heatmap
-        liquidation_map = results.get("liquidation_heatmap", {})
-        if liquidation_map:
-            print(f"  🔥 Liquidation Heatmap: ✅ ACTIVE")
-            for coin in ['BTC', 'ETH']:
-                coin_data = liquidation_map.get(coin, {})
+        liquidation = results.get("liquidation_heatmap", {})
+        if liquidation:
+            for coin in ["BTC", "ETH"]:
+                coin_data = liquidation.get(coin, {})
                 if coin_data:
-                    print(f"    {coin}: {coin_data.get('liquidation_pressure', 'N/A')} | Funding: {coin_data.get('funding_rate', 0):.4f}% | Long zones: {len(coin_data.get('nearby_long_liquidations', []))} | Short zones: {len(coin_data.get('nearby_short_liquidations', []))}")
+                    print(f"  {coin} Liquidation: {coin_data.get('liquidation_pressure', 'N/A')} | Funding: {coin_data.get('funding_rate', 0):.3f}%")
+                else:
+                    print(f"  {coin} Liquidation: ❌ MISSING")
         else:
-            print(f"  🔥 Liquidation Heatmap: ❌ BINANCE API KEYS REQUIRED")
+            print("  Liquidation Heatmap: ❌ MISSING")
         
         # Economic Calendar
-        economic_cal = results.get("economic_calendar", {})
-        if economic_cal:
-            print(f"  📅 Economic Calendar: ✅ ACTIVE")
-            print(f"    Recommendation: {economic_cal.get('recommendation', 'N/A')}")
-            print(f"    High Impact Events: {economic_cal.get('high_impact', 0)}")
-            next_event = economic_cal.get('next_high_impact', {})
-            if next_event:
-                print(f"    Next Major Event: {next_event.get('title', 'N/A')[:50]}")
+        economic = results.get("economic_calendar", {})
+        if economic:
+            print(f"  Economic Calendar: {economic.get('recommendation', 'N/A')} | High Impact: {economic.get('high_impact', 0)}")
         else:
-            print(f"  📅 Economic Calendar: ❌ COINMARKETCAL API KEY REQUIRED")
+            print("  Economic Calendar: ❌ MISSING")
         
         # Multi-Source Sentiment
-        multi_sentiment = results.get("multi_source_sentiment", {})
-        if multi_sentiment:
-            print(f"  🐦 Multi-Source Sentiment: ✅ ACTIVE")
-            print(f"    Sentiment Signal: {multi_sentiment.get('sentiment_signal', 'N/A')}")
-            print(f"    Sources Analyzed: {multi_sentiment.get('sources_analyzed', 0)}")
-            print(f"    Average Sentiment: {multi_sentiment.get('average_sentiment', 0):.2f}")
+        sentiment = results.get("multi_source_sentiment", {})
+        if sentiment:
+            print(f"  Multi-Source Sentiment: {sentiment.get('sentiment_signal', 'N/A')} | Sources: {sentiment.get('sources_analyzed', 0)}")
         else:
-            print(f"  🐦 Multi-Source Sentiment: ⚠️  Limited data - needs NEWS API KEY for full analysis")
+            print("  Multi-Source Sentiment: ❌ MISSING")
         
         # Whale Movements
-        whale_data = results.get("whale_movements", {})
-        if whale_data:
-            print(f"  🐋 Whale Movements: ✅ ACTIVE")
-            print(f"    Whale Signal: {whale_data.get('whale_signal', 'N/A')}")
-            print(f"    Whale Sentiment: {whale_data.get('whale_sentiment', 0):.2f}")
-            print(f"    Active Signals: {whale_data.get('signals_detected', 0)}")
-            breakdown = whale_data.get('breakdown', {})
-            if breakdown:
-                for source, data in breakdown.items():
-                    if isinstance(data, dict) and 'activity' in data:
-                        print(f"    {source}: {data['activity']}")
+        whale = results.get("whale_movements", {})
+        if whale:
+            print(f"  Whale Movements: {whale.get('whale_signal', 'N/A')} | Sentiment: {whale.get('whale_sentiment', 0):.2f}")
         else:
-            print(f"  🐋 Whale Movements: ⚠️  Limited data - needs ETHERSCAN API KEY for full tracking")
+            print("  Whale Movements: ❌ MISSING")
         
-        print("\n" + "="*80)
-        
-        # Accurate data count
-        total_collected = self._count_data_points(results)
-        total_possible = 54  # Updated from 53 to 54
-        missing_count = total_possible - total_collected
-        
-        print(f"📊 DATA SUMMARY: {total_collected}/{total_possible} data points collected")
-        
-        if missing_count > 0:
-            print(f"⚠️  {missing_count} data points missing - check API keys and network connectivity")
-        else:
-            print("✅ All data points collected successfully!")
-        
-        print("="*80 + "\n")
+        print("="*80)
 
     def collect_all_data(self):
         """Collect all market data with CoinGecko calls separated to avoid rate limiting"""
