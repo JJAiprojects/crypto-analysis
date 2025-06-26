@@ -79,6 +79,11 @@ class CryptoDataCollector:
                     if not data:
                         print(f"[WARN] Empty response from {url}")
                         return None
+                    
+                    # Add small delay after successful CoinGecko calls to be respectful
+                    if 'coingecko' in url.lower():
+                        time.sleep(0.5)  # 500ms delay for CoinGecko
+                    
                     return data
                 except json.JSONDecodeError as e:
                     print(f"[ERROR] Invalid JSON response from {url}: {e}")
@@ -532,9 +537,10 @@ class CryptoDataCollector:
     def get_btc_dominance(self):
         """Get BTC dominance"""
         try:
-            data = self.resilient_request("https://api.coingecko.com/api/v3/global")
-            if data:
-                return data["data"]["market_cap_percentage"]["btc"]
+            # Use the combined global data call to avoid duplicate API requests
+            global_data = self._get_global_data()
+            if global_data:
+                return global_data.get("btc_dominance")
         except Exception as e:
             print(f"[ERROR] BTC Dominance: {e}")
         return None
@@ -542,15 +548,40 @@ class CryptoDataCollector:
     def get_global_market_cap(self):
         """Get global crypto market cap"""
         try:
-            data = self.resilient_request("https://api.coingecko.com/api/v3/global")
-            if data:
-                return (
-                    data["data"]["total_market_cap"]["usd"], 
-                    data["data"]["market_cap_change_percentage_24h_usd"]
-                )
+            # Use the combined global data call to avoid duplicate API requests
+            global_data = self._get_global_data()
+            if global_data:
+                return global_data.get("market_cap"), global_data.get("market_cap_change")
         except Exception as e:
             print(f"[ERROR] Global Market Cap: {e}")
         return None, None
+
+    def _get_global_data(self):
+        """Get global data from CoinGecko (cached to avoid duplicate calls)"""
+        if not hasattr(self, '_global_data_cache'):
+            self._global_data_cache = None
+            self._global_data_timestamp = 0
+        
+        # Cache for 30 seconds to avoid duplicate calls
+        current_time = time.time()
+        if (self._global_data_cache is not None and 
+            current_time - self._global_data_timestamp < 30):
+            return self._global_data_cache
+        
+        try:
+            data = self.resilient_request("https://api.coingecko.com/api/v3/global")
+            if data and "data" in data:
+                self._global_data_cache = {
+                    "btc_dominance": data["data"]["market_cap_percentage"]["btc"],
+                    "market_cap": data["data"]["total_market_cap"]["usd"],
+                    "market_cap_change": data["data"]["market_cap_change_percentage_24h_usd"]
+                }
+                self._global_data_timestamp = current_time
+                return self._global_data_cache
+        except Exception as e:
+            print(f"[ERROR] Global data retrieval: {e}")
+        
+        return None
 
     def get_trading_volumes(self):
         """Get trading volumes"""
@@ -1816,36 +1847,41 @@ class CryptoDataCollector:
         print("="*80 + "\n")
 
     def collect_all_data(self):
-        """Collect all market data in parallel"""
+        """Collect all market data with CoinGecko calls separated to avoid rate limiting"""
         print("[INFO] Starting comprehensive data collection...")
         
-        data_tasks = {
+        # Separate CoinGecko calls to run sequentially (avoid rate limiting)
+        coingecko_tasks = {
             "crypto": self.get_crypto_data,
-            "futures": self.get_futures_sentiment,
-            "fear_greed": self.get_fear_greed_index,
             "btc_dominance": self.get_btc_dominance,
             "market_cap": self.get_global_market_cap,
             "volumes": self.get_trading_volumes,
+        }
+        
+        # Other API calls can run in parallel
+        parallel_tasks = {
+            "futures": self.get_futures_sentiment,
+            "fear_greed": self.get_fear_greed_index,
             "technical_indicators": self.get_technical_indicators,
             "historical_data": self.get_historical_price_data,
             "volatility_regime": self.get_volatility_regime  # NEW: Added volatility regime
         }
         
         if self.config["indicators"].get("include_macroeconomic", True):
-            data_tasks.update({
+            parallel_tasks.update({
                 "m2_supply": self.get_m2_money_supply,
                 "inflation": self.get_inflation_data,
                 "interest_rates": self.get_interest_rates
             })
         
         if self.config["indicators"].get("include_stock_indices", True):
-            data_tasks["stock_indices"] = self.get_stock_indices
+            parallel_tasks["stock_indices"] = self.get_stock_indices
         
         if self.config["indicators"].get("include_commodities", True):
-            data_tasks["commodities"] = self.get_commodity_prices
+            parallel_tasks["commodities"] = self.get_commodity_prices
         
         if self.config["indicators"].get("include_social_metrics", True):
-            data_tasks["social_metrics"] = self.get_crypto_social_metrics
+            parallel_tasks["social_metrics"] = self.get_crypto_social_metrics
         
         # NEW ENHANCED DATA SOURCES - WITH API KEY VALIDATION
         if self.config["indicators"].get("include_enhanced_data", True):
@@ -1875,11 +1911,26 @@ class CryptoDataCollector:
             else:
                 print("[WARN] ⚠️ Etherscan API key missing - Whale tracking disabled")
             
-            data_tasks.update(enhanced_data_tasks)
+            parallel_tasks.update(enhanced_data_tasks)
         
         results = {}
-        with concurrent.futures.ThreadPoolExecutor(max_workers=len(data_tasks)) as executor:
-            future_to_task = {executor.submit(func): task_name for task_name, func in data_tasks.items()}
+        
+        # STEP 1: Run CoinGecko calls sequentially to avoid rate limiting
+        print("[INFO] Running CoinGecko API calls sequentially...")
+        for task_name, func in coingecko_tasks.items():
+            try:
+                results[task_name] = func()
+                print(f"[INFO] ✅ Completed: {task_name}")
+                # Add delay between CoinGecko calls
+                time.sleep(2)
+            except Exception as e:
+                print(f"[ERROR] ❌ Task {task_name} failed: {e}")
+                results[task_name] = None
+        
+        # STEP 2: Run other API calls in parallel
+        print("[INFO] Running other API calls in parallel...")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(parallel_tasks)) as executor:
+            future_to_task = {executor.submit(func): task_name for task_name, func in parallel_tasks.items()}
             
             for future in concurrent.futures.as_completed(future_to_task):
                 task_name = future_to_task[future]
