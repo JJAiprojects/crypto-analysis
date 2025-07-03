@@ -199,11 +199,15 @@ def send_telegram_notification(message, bot_token, chat_id):
         print(f"[ERROR] Failed to send telegram notification: {e}")
         return False
 
-async def run_ai_prediction_system(test_mode=False, analysis_only=False):
+async def run_ai_prediction_system(test_mode=False, reasoning_mode=False, analysis_only=False):
     """Main function to run AI prediction system (calculation predictor removed)"""
     
     print("=" * 80)
-    if test_mode:
+    if reasoning_mode:
+        print("🧠 CRYPTO AI PREDICTION SYSTEM - REASONING MODE")
+        print("🧪 Using TEST Telegram bot and chat (safety)")
+        print("💭 AI thought process will be shown")
+    elif test_mode:
         print("🧪 CRYPTO AI PREDICTION SYSTEM TESTING - TEST MODE")
         print("⚠️  Using TEST Telegram bot and chat")
     else:
@@ -283,7 +287,7 @@ async def run_ai_prediction_system(test_mode=False, analysis_only=False):
         print("=" * 60)
         
         print("Running AI analysis with all collected data...")
-        ai_prediction = await ai_predictor.generate_prediction(all_data, test_mode)
+        ai_prediction = await ai_predictor.generate_prediction(all_data, test_mode, reasoning_mode)
         
         if ai_prediction:
             print("✅ AI Prediction completed successfully")
@@ -365,6 +369,7 @@ def main():
     """Main entry point with command line argument support"""
     parser = argparse.ArgumentParser(description='Crypto AI Prediction System')
     parser.add_argument('--test', action='store_true', help='Run in test mode')
+    parser.add_argument('--reasoning', action='store_true', help='Enable reasoning mode (shows AI thought process, always uses test environment)')
     parser.add_argument('--analysis', action='store_true', help='Run analysis only (no predictions)')
     parser.add_argument('--inspect', action='store_true', help='Inspect data storage and exit')
     
@@ -374,10 +379,24 @@ def main():
     if args.inspect:
         inspect_data_storage()
         sys.exit(0)
+    
+    # Determine modes
+    reasoning_mode = args.reasoning
+    test_mode = args.test or args.reasoning  # Reasoning mode always uses test environment
+    
+    # Show mode information
+    if reasoning_mode:
+        print("🧠 REASONING MODE ENABLED - AI thought process will be shown")
+        print("📋 Using test environment (test bot/chat) for safety")
+    elif test_mode:
+        print("🧪 TEST MODE ENABLED - Using test environment")
+    else:
+        print("🚀 PRODUCTION MODE - Using production environment")
         
     # Run the async system
     success = asyncio.run(run_ai_prediction_system(
-        test_mode=args.test, 
+        test_mode=test_mode, 
+        reasoning_mode=reasoning_mode,
         analysis_only=args.analysis
     ))
     
@@ -406,7 +425,7 @@ if __name__ == "__main__":
         def predict():
             try:
                 # Run prediction system
-                success = asyncio.run(run_ai_prediction_system(test_mode=False, analysis_only=False))
+                success = asyncio.run(run_ai_prediction_system(test_mode=False, reasoning_mode=False, analysis_only=False))
                 return jsonify({
                     "status": "completed" if success else "failed",
                     "timestamp": datetime.now(timezone.utc).isoformat()

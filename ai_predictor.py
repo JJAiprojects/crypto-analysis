@@ -59,7 +59,9 @@ class AIPredictor:
         # Count actual data points being used
         data_points_used = self._count_available_data(market_data)
         
-        prompt = f"""You are a professional crypto trader with 15+ years experience. Follow the 8-STEP ENHANCED DECISION FRAMEWORK internally to analyze the data, but provide only the final CONCISE trading outlook.
+        prompt = f"""You are a professional crypto trader with 15+ years experience. 
+
+⚠️ CRITICAL INSTRUCTION: You MUST follow the 8-STEP ENHANCED DECISION FRAMEWORK (Steps 0-8) internally to analyze the data. This framework is MANDATORY and cannot be ignored. Only provide the final CONCISE trading outlook based on this framework.
 
 MARKET DATA HIERARCHY ({data_points_used}/54 indicators):
 =========================================================
@@ -130,6 +132,12 @@ MARKET DATA HIERARCHY ({data_points_used}/54 indicators):
 - Historical Resistance Confluence: {self._find_historical_resistance_levels(historical)}
 - Multi-timeframe Momentum Alignment: {self._check_momentum_alignment(historical)}
 
+⚠️ FORMATTING REQUIREMENTS:
+- All prices must be whole numbers (no decimals): $106,384 not $106,384.79
+- Use comma separators for thousands: $106,384, $2,454
+- Percentages can have 1 decimal: 0.8%, 1.2%
+- Confidence levels are whole numbers: 70%, 75%
+
 ENHANCED 8-STEP INTERNAL ANALYSIS FRAMEWORK (Do NOT output these steps):
 ========================================================================
 
@@ -142,9 +150,24 @@ PRIORITY-BASED OVERRIDE LOGIC:
 STEP 0: CONFLICT RESOLUTION HIERARCHY (Handle Contradictions):
 - SUPER HIGH vs HIGH: Economic Events and Volatility override everything → FORCE FLAT if conflict
 - HIGH PRIORITY CONFLICTS: If Liquidation signals contradict Bond Market signals → Use MOST RECENT liquidation data, discount bond impact by 50%  
-- MEDIUM PRIORITY CONFLICTS: If Order Book vs Whale Movements contradict → Require 70%+ conviction on BOTH or reduce to NEUTRAL
+- MEDIUM PRIORITY CONFLICTS: If Order Book vs Whale Movements contradict → Require 70%+ conviction on BOTH or reduce to SIDEWAYS
 - If Traditional TA conflicts with higher priorities → Ignore traditional signals completely
 - CONFLICT RESOLUTION RULE: When in doubt, choose FLAT position over conflicted trade
+
+STEP 0.5: SIDEWAYS MARKET DETECTION & TREND VALIDATION + NOISE FILTERING
+- Check if market is in sideways consolidation: Price range <1% and RSI 40-60 over last 3h
+- Check for mixed signals: If high-priority signals conflict by >50%, flag as potential sideways
+- BREAKOUT POTENTIAL CHECK: If sideways, check volume >1.5x 3-hour average and price within 0.5% of support/resistance
+- IF BREAKOUT POTENTIAL: Flag for conditional breakout setup in Step 7
+- IF SIDEWAYS DETECTED: Set bias to "SIDEWAYS" and proceed to Step 7
+- IF TRENDING: Continue with normal analysis flow
+- TREND VALIDATION: Check last 2-3 candles for momentum changes with noise filtering:
+  * Minimum threshold: >0.5% move required to trigger validation
+  * Confirmation requirement: 2 consecutive 1-hour candles in same direction (green/bullish, red/bearish) with volume >10% above 3-hour average
+  * Apply individually to BTC and ETH
+  * If threshold met but no confirmation → Flag as potential noise, continue monitoring
+- REVERSAL ALERT: If >2 consecutive opposite candles with confirmation → Flag for bias adjustment
+- RULE: SIDEWAYS covers both consolidation patterns and mixed/uncertain signals, noise filtering prevents false signals
 
 
 STEP 1: Economic Event Override Check + Bond Market Check
@@ -161,19 +184,28 @@ STEP 2: Liquidation Magnet Analysis (OVERRIDE TRADITIONAL S/R)
 - MANDATORY: If liquidation pressure = "HIGH" → Liquidation targets become ONLY valid targets
 - RULE: Never mix liquidation and traditional levels in same trade plan
 
-STEP 3: Smart Money & Entry Timing Gate + Volume Confirmation
-- Check Order Book imbalance: >70% = strong signal, 60-70% = moderate, <60% = weak
-- Check Whale Movement signal: ACCUMULATING/DISTRIBUTING vs trade direction
+STEP 3: Smart Money & Entry Timing Gate + Volume Confirmation + Adaptive Thresholds
+- Check Order Book imbalance with adaptive thresholds:
+  * Low Volatility: >60% = strong signal, 50-60% = moderate, <50% = weak
+  * Medium Volatility: >75% = strong signal, 65-75% = moderate, <65% = weak
+  * High/Extreme Volatility: >85% = strong signal, 75-85% = moderate, <75% = weak
+- Check Whale Movement signal with same adaptive thresholds:
+  * Low Volatility: >60% alignment required
+  * Medium Volatility: >75% alignment required
+  * High/Extreme Volatility: >85% alignment required
 - VOLUME GATE: Only execute if volume confirms price signal (no weak volume signals)
 - EXECUTION GATE: Only execute if BOTH order book AND whale signals AND volume support trade direction
-- RULE: Don't fight smart money flow OR weak volume
+- RULE: Don't fight smart money flow OR weak volume, adapt thresholds to market conditions
 
-STEP 4: Technical Analysis WITH Historical Validation
+STEP 4: Technical Analysis WITH Historical Validation + Multi-timeframe Filter
 - RSI, support/resistance (if not overridden by liquidations), trend direction
 - BTC/ETH signals for directional bias
 - HISTORICAL CHECK: Confirm signals align with multi-timeframe momentum
 - WEEKLY/MONTHLY TREND: Only trade WITH long-term trend unless strong reversal signals
-- RULE: Technical signals must pass historical momentum filter
+- OPTIONAL 4H FILTER: Check 4-hour SMA20 direction vs 1-hour trend for both BTC and ETH
+  * If aligned: +5% confidence (capped at 85%) for respective coin
+  * If misaligned: -5% confidence and flag "Trend Divergence Warning" for respective coin
+- RULE: Technical signals must pass historical momentum filter, 4h filter is advisory only
 
 STEP 5: Macro Trend Alignment Check
 - Fear & Greed, BTC dominance, S&P 500/VIX for overall market bias
@@ -185,59 +217,89 @@ STEP 6: Sentiment Risk Assessment
 - High funding = crowded positioning = reversal risk
 - RULE: Avoid trading in same direction as extreme crowd positioning
 
-STEP 7: Enhanced Execution Planning
+STEP 7: Enhanced Execution Planning + Conditional Breakout Setup
 - Entry zones: Use liquidation clusters if present, else traditional S/R
 - Stop loss: Place beyond next liquidation cluster or traditional S/R level
 - Take profit: Target liquidation clusters as magnetic price targets
 - MINIMUM 1:2 R/R, but adjust for liquidation cluster distances
+- CONDITIONAL BREAKOUT: If breakout potential flagged in Step 0.5, create additional breakout plan:
+  * Entry: On breakout confirmation (candle close > resistance or < support by 1% with volume spike)
+  * SL: Beyond the opposite level (1% below support for long, 1% above resistance for short)
+  * TP: Next liquidation cluster or 2% move
+  * Confidence: Reduce by 10% due to uncertainty
 - RULE: Liquidation-aware stop/target placement
 
-STEP 8: Dynamic Risk Management & Position Sizing
+STEP 8: Dynamic Risk Management & Position Sizing + Confidence Calculation + Reversal Detection + ATR Trigger
 - Normal market conditions = 100% position size (full intended trade)
 - If Volatility Regime = "HIGH" or "EXTREME" → Reduce to 75% or 50%
 - If Economic Calendar shows high risk → Reduce by 25% 
 - If fighting Whale signals → Reduce by 25%
+- REVERSAL DETECTION: Check latest 3 candles for both BTC and ETH individually
+  * If BTC shows >1% opposite movement → Reduce BTC position to 50%
+  * If ETH shows >1% opposite movement → Reduce ETH position to 50%
+- ATR VOLATILITY TRIGGER: Check 1-hour ATR for both BTC and ETH individually
+  * If BTC 1h ATR increases >2% from prior hour → Reduce BTC position by 25%
+  * If ETH 1h ATR increases >2% from prior hour → Reduce ETH position by 25%
+  * If BOTH ATRs spike >2% → Reduce both positions by 25% (correlation risk)
 - If multiple risk factors present → Can reduce to minimum 25%
 - If all signals align perfectly → Can use 100% even in elevated volatility
+- CONFIDENCE CALCULATION: Base confidence = average of signal strengths (order book, volume, RSI, liquidation, whale movements)
+- CONFIDENCE ADJUSTMENT: +5% if all high-priority signals align, -5% if misaligned by >50%
+- CONFIDENCE CAP: Maximum 85% to account for market uncertainty
 - POSITION SIZE REPRESENTS: Percentage of your intended trade size, NOT portfolio allocation
-- OUTPUT: Present as 100%, 75%, 50%, or 25% based on risk assessment
+- OUTPUT: Present individual position sizes in each execution plan (100%, 75%, 50%, or 25%)
 
+⚠️ REMINDER: You MUST follow the above 8-STEP FRAMEWORK (Steps 0-8) to analyze the data. Do not skip any steps.
+
+POSITION SIZE INSTRUCTION:
+Position Size represents the recommended position size for each coin individually (not portfolio allocation).
+- Standard position: 100% (full position)
+- Reduced risk: 75% (moderate position) 
+- High risk conditions: 50% (conservative position)
+- Extreme risk: 25% (minimal position)
+- Reversal detection: 50% if >1% opposite movement in last 3 candles
+Present in each execution plan as percentage of intended position size for that specific coin.
 
 CRITICAL DECISION TREE:
 ======================
-1. Economic Events = FLAT? → If YES: Output "FLAT - Major events pending"
-2. Extreme Volatility? → If YES: Reduce size by regime multiplier  
-3. Near Liquidation Clusters? → If YES: Use clusters as primary targets, ignore traditional S/R
-4. Order Book + Whales Aligned? → If NO: Lower confidence or avoid
-5. Traditional signals confirm? → If YES: Execute with priority-based sizing
-6. Risk management applied? → Always adjust for volatility regime and event risk
+1. Sideways Market Detected? → If YES: Output "SIDEWAYS - No Entry, Monitor for breakout"
+2. Economic Events = FLAT? → If YES: Output "FLAT - Major events pending"
+3. Extreme Volatility? → If YES: Reduce size by regime multiplier  
+4. Near Liquidation Clusters? → If YES: Use clusters as primary targets, ignore traditional S/R
+5. Order Book + Whales Aligned? → If NO: Lower confidence or avoid
+6. Traditional signals confirm? → If YES: Execute with priority-based sizing
+7. Risk management applied? → Always adjust for volatility regime and event risk
 
 OUTPUT PRIORITY: Economic Events > Liquidation Targets > Entry Timing > Traditional TA
 
-PRIORITY-INTEGRATED TIMEFRAME LOGIC:
+PRIORITY-INTEGRATED TIMEFRAME LOGIC + VOLATILITY-BASED ACTIVATION:
 - SUPER HIGH PRIORITY OVERRIDES: If Economic Events pending → Extend timeframe by 2x (wait for clarity)
 - HIGH PRIORITY LIQUIDATION TARGETS: 2-6 hours (liquidations happen fast, use shorter timeframes)
+  * VOLATILITY ACTIVATION: If Volatility Ratio >0.6 → Use 2-4h, if >0.9 with volume >2x average → Use 1-2h
 - HIGH PRIORITY BOND MARKET MOVES: 12-48 hours (macro moves take time to develop)
 - MEDIUM PRIORITY SMART MONEY: 4-12 hours (institutional flows develop over hours)
+  * VOLATILITY ACTIVATION: If Volatility Ratio >0.6 → Use 2-4h, if >0.9 with volume >2x average → Use 1-2h
 - LOW PRIORITY TRADITIONAL TA: 6-24 hours (standard technical patterns)
 - VOLATILITY REGIME ADJUSTMENT: If "EXTREME" → Cut all timeframes by 50% (faster moves)
 - CONFLICT RESOLUTION: If multiple timeframes suggested → Use the SHORTEST from highest priority signal
-FINAL RULE: Priority level determines base timeframe, volatility regime adjusts duration
+FINAL RULE: Priority level determines base timeframe, volatility regime adjusts duration and activation
 
 REQUIRED OUTPUT FORMAT (CONCISE ONLY):
 =====================================
 
 <b>━━━ 📊 EXECUTIVE SUMMARY ━━━</b>
 - Fear & Greed: [value] ([sentiment])
-- Position Size: [X]% (of intended trade size - 100% = full position, 50% = half position, etc.)
-- Market Bias: [BULLISH/BEARISH/NEUTRAL]
+- Market Bias: [BULLISH/BEARISH/SIDEWAYS]
+- Trend Prediction: [TRENDING/SIDEWAYS]
 - Primary Driver: [key factor driving direction]
 - Risk Level: [High/Medium/Low] 
 - Position Crowding: [BTC/ETH crowding assessment]
+- Trend Divergence: [BTC/ETH divergence warnings if any]
 
 <b>━━━ 🎯 BTC EXECUTION PLAN - [BIAS] ━━━</b>
 💰 Current: $[price]
 ⏱️ Timeframe: [X-Yh] ([breakout/swing/trend/reversal] setup)
+📊 Position Size: [X]% (of intended trade size)
 📍 <b>Entry: $[low]-$[high]</b>
 🛑 <b>SL: $[price] ([X]%)</b>
 🎯 <b>TP 1: $[price] ([X]%)</b> 
@@ -248,6 +310,7 @@ REQUIRED OUTPUT FORMAT (CONCISE ONLY):
 <b>━━━ 🎯 ETH EXECUTION PLAN - [BIAS] ━━━</b>
 💰 Current: $[price]
 ⏱️ Timeframe: [X-Yh] ([breakout/swing/trend/reversal] setup)
+📊 Position Size: [X]% (of intended trade size)
 📍 <b>Entry: $[low]-$[high]</b>
 🛑 <b>SL: $[price] ([X]%)</b>
 🎯 <b>TP 1: $[price] ([X]%)</b>
@@ -260,13 +323,22 @@ REQUIRED OUTPUT FORMAT (CONCISE ONLY):
 - Volatility Regime: [regime] detected - position sizing adjusted accordingly
 - Macro Risk: [traditional market alignment]
 
-POSITION SIZE INSTRUCTION:
-Position Size represents the recommended position size for this trade setup (not portfolio allocation).
-- Standard position: 100% (full position)
-- Reduced risk: 75% (moderate position) 
-- High risk conditions: 50% (conservative position)
-- Extreme risk: 25% (minimal position)
-Present in Executive Summary as percentage of intended position size.
+[IF SIDEWAYS DETECTED, REPLACE EXECUTION PLANS WITH:]
+<b>━━━ ⏸️ MARKET STATUS: SIDEWAYS ━━━</b>
+- No Entry - Monitor for breakout (consolidation) or signal alignment (mixed signals)
+- Key Levels: Support $[X], Resistance $[Y]
+- Breakout Watch: Volume >1.5x average near levels
+- Confidence: [XX]% (sideways uncertainty)
+
+[IF BREAKOUT POTENTIAL DETECTED, ADD ADDITIONAL PLAN:]
+<b>━━━ 🎯 CONDITIONAL BREAKOUT SETUP ━━━</b>
+💰 Current: $[price]
+⏱️ Setup: Breakout Pending
+📍 <b>Entry: On breakout >$[resistance] or <$[support] (1% with volume spike)</b>
+🛑 <b>SL: $[opposite_level] (1% beyond opposite level)</b>
+🎯 <b>TP: $[target] (2% move or next liquidation cluster)</b>
+⚖️ Risk/Reward: [X:X]
+📊 Confidence: [XX]% (breakout uncertainty)
 
 STOP HERE. Keep under 600 words total. Be precise and actionable."""
         
@@ -777,7 +849,7 @@ STOP HERE. Keep under 600 words total. Be precise and actionable."""
     # END NEW HELPER FUNCTIONS
     # ============================================================================    
 
-    def get_ai_prediction(self, market_data):
+    def get_ai_prediction(self, market_data, reasoning_mode=False):
         """Get AI prediction using comprehensive market data"""
         try:
             print("[INFO] Generating AI prediction with comprehensive market analysis...")
@@ -785,20 +857,62 @@ STOP HERE. Keep under 600 words total. Be precise and actionable."""
             # Create comprehensive prompt
             prompt = self.create_comprehensive_prompt(market_data)
             
+            # Modify system prompt for reasoning mode
+            if reasoning_mode:
+                system_prompt = """You are a professional cryptocurrency trader and market analyst with 15+ years of experience. 
+
+CRITICAL: You are in REASONING MODE. You MUST show your complete thought process.
+
+REQUIRED FORMAT - DO NOT SKIP ANY SECTION:
+
+━━━ STEP-BY-STEP REASONING ━━━
+Step 0.5: Sideways Market Detection & Trend Validation
+[Explain how you analyze if market is sideways or trending]
+
+Step 1: Real-time Trend Validation
+[Explain your trend analysis and confirmation requirements]
+
+Step 2: Enhanced Timeframe Sensitivity
+[Explain your timeframe analysis and volatility considerations]
+
+Step 3: Smart Money & Volume Gate Strengthening
+[Explain volume analysis and smart money indicators]
+
+Step 4: Dynamic Bias Adjustment
+[Explain how you adjust bias based on current conditions]
+
+Step 5: Sentiment & Crowding Checks
+[Explain sentiment analysis and position crowding assessment]
+
+Step 6: Adaptive Risk Management
+[Explain risk assessment and position sizing decisions]
+
+Step 7: Breakout Confirmation Filters
+[Explain breakout analysis and confirmation requirements]
+
+Step 8: Final Decision & Confidence
+[Explain your final decision and confidence level]
+
+MANDATORY: You MUST show your reasoning for each step. Do not skip the reasoning section. 
+
+IMPORTANT: In reasoning mode, ONLY provide the step-by-step reasoning. Do NOT include any final prediction or trading recommendations."""
+            else:
+                system_prompt = "You are a professional cryptocurrency trader and market analyst with 15+ years of experience. Provide detailed, actionable trading analysis."
+            
             # Make OpenAI API call
             response = self.client.chat.completions.create(
-                model="gpt-4",
+                model="gpt-4o",
                 messages=[
                     {
                         "role": "system", 
-                        "content": "You are a professional cryptocurrency trader and market analyst with 15+ years of experience. Provide detailed, actionable trading analysis."
+                        "content": system_prompt
                     },
                     {
                         "role": "user", 
                         "content": prompt
                     }
                 ],
-                max_tokens=1500,
+                max_tokens=3000 if reasoning_mode else 1500,  # Much more tokens for detailed reasoning
                 temperature=0.7
             )
             
@@ -809,10 +923,11 @@ STOP HERE. Keep under 600 words total. Be precise and actionable."""
             return {
                 "prediction": ai_prediction,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
-                "model": "gpt-4",
+                "model": "gpt-4o",
                 "prompt_length": len(prompt),
                 "response_length": len(ai_prediction),
-                "data_points_used": self._count_available_data(market_data)
+                "data_points_used": self._count_available_data(market_data),
+                "reasoning_mode": reasoning_mode
             }
             
         except Exception as e:
@@ -820,9 +935,10 @@ STOP HERE. Keep under 600 words total. Be precise and actionable."""
             return {
                 "prediction": f"AI prediction unavailable - Error: {str(e)}",
                 "timestamp": datetime.now(timezone.utc).isoformat(),
-                "model": "gpt-4",
+                "model": "gpt-4o",
                 "error": str(e),
-                "data_points_used": 0
+                "data_points_used": 0,
+                "reasoning_mode": reasoning_mode
             }
 
     def format_ai_telegram_message(self, ai_result, market_data, test_mode=False):
@@ -892,13 +1008,48 @@ STOP HERE. Keep under 600 words total. Be precise and actionable."""
             print(f"[ERROR] Formatting AI Telegram message: {e}")
             return f"🤖 AI PREDICTION ERROR\n\nFailed to format prediction: {str(e)}\n\n⏰ {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}"
 
-    def send_ai_telegram(self, ai_result, market_data, test_mode=False):
+    def format_thought_process_message(self, ai_result, market_data):
+        """Format AI thought process for Telegram"""
+        try:
+            prediction = ai_result.get("prediction", "No prediction available")
+            data_points = ai_result.get("data_points_used", 0)
+            timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+            
+            # Clean up the prediction text
+            lines = prediction.split('\n')
+            cleaned_lines = []
+            
+            for line in lines:
+                line = line.strip()
+                if line:
+                    cleaned_lines.append(line)
+            
+            thought_text = '\n'.join(cleaned_lines)
+            
+            # Truncate if too long (Telegram limit is ~4096 chars)
+            if len(thought_text) > 3500:
+                thought_text = thought_text[:3500] + "\n\n[Message truncated due to length]"
+            
+            message = f"""🧠 <b>AI THOUGHT PROCESS</b>
+
+{thought_text}
+
+━━━━━━━━━━━━━━━━━━━━
+📈 Data Points: {data_points}/54
+⏰ {timestamp}
+🧪 REASONING MODE - TEST ENVIRONMENT"""
+
+            return message
+            
+        except Exception as e:
+            print(f"[ERROR] Formatting thought process message: {e}")
+            return f"🧠 AI THOUGHT PROCESS ERROR\n\nFailed to format thought process: {str(e)}\n\n⏰ {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}"
+
+    def send_ai_telegram(self, ai_result, market_data, test_mode=False, reasoning_mode=False):
         """Send AI prediction via Telegram"""
         try:
-            message = self.format_ai_telegram_message(ai_result, market_data, test_mode)
-            
-            # Determine which bot config to use (ONLY difference in test mode)
-            if test_mode:
+            # Determine which bot config to use (reasoning mode always uses test environment)
+            if test_mode or reasoning_mode:
                 bot_token = self.config["telegram"]["test"]["bot_token"]
                 chat_id = self.config["telegram"]["test"]["chat_id"]
                 print(f"[INFO] Using TEST Telegram configuration")
@@ -908,7 +1059,7 @@ STOP HERE. Keep under 600 words total. Be precise and actionable."""
                 print(f"[INFO] Using PRODUCTION Telegram configuration")
             
             if not bot_token or not chat_id:
-                mode_name = "test" if test_mode else "production"
+                mode_name = "test" if (test_mode or reasoning_mode) else "production"
                 print(f"[ERROR] Telegram configuration missing for {mode_name} mode")
                 print(f"[ERROR] Bot token: {'SET' if bot_token else 'NOT SET'}")
                 print(f"[ERROR] Chat ID: {'SET' if chat_id else 'NOT SET'}")
@@ -917,11 +1068,19 @@ STOP HERE. Keep under 600 words total. Be precise and actionable."""
             # Send message directly using the specific bot configuration  
             from telegram_utils import TelegramBot
             bot = TelegramBot(bot_token=bot_token, chat_id=chat_id)
-            # Don't add prefix here since it's already handled in format_ai_telegram_message
-            result = bot.send_message(message)
+            
+            if reasoning_mode:
+                # Send thought process message only
+                thought_message = self.format_thought_process_message(ai_result, market_data)
+                result = bot.send_message(thought_message)
+            else:
+                # Send regular message only
+                message = self.format_ai_telegram_message(ai_result, market_data, test_mode)
+                result = bot.send_message(message)
             
             if result:
-                print(f"[INFO] ✅ AI prediction sent via Telegram ({'test' if test_mode else 'production'})")
+                mode_text = "reasoning" if reasoning_mode else ("test" if test_mode else "production")
+                print(f"[INFO] ✅ AI prediction sent via Telegram ({mode_text})")
                 return True
             else:
                 print(f"[ERROR] Failed to send AI prediction via Telegram")
@@ -944,7 +1103,7 @@ STOP HERE. Keep under 600 words total. Be precise and actionable."""
                 "type": "ai_prediction",
                 "test_mode": test_mode,
                 "prediction": ai_result.get("prediction", ""),
-                "model": ai_result.get("model", "gpt-4"),
+                "model": ai_result.get("model", "gpt-4o"),
                 "data_points_used": ai_result.get("data_points_used", 0),
                 "prompt_length": ai_result.get("prompt_length", 0),
                 "response_length": ai_result.get("response_length", 0),
@@ -974,14 +1133,8 @@ STOP HERE. Keep under 600 words total. Be precise and actionable."""
             
             print(f"[INFO] ✅ AI prediction data prepared ({'test mode' if test_mode else 'production mode'})")
             
-            # Simple file backup for non-test mode
-            if not test_mode:
-                filename = f"ai_prediction_{timestamp.strftime('%Y%m%d_%H%M%S')}.json"
-                with open(filename, 'w') as f:
-                    json.dump(prediction_data, f, indent=2, default=str)
-                print(f"[INFO] ✅ AI prediction saved to {filename}")
-            else:
-                print(f"[INFO] 🧪 Test mode - no file created")
+            # No file saving - data only prepared for potential database use
+            print(f"[INFO] 📊 Data prepared (no files created)")
             
             return prediction_data
             
@@ -989,31 +1142,37 @@ STOP HERE. Keep under 600 words total. Be precise and actionable."""
             print(f"[ERROR] Saving AI prediction: {e}")
             return None
 
-    def run_ai_prediction(self, market_data, test_mode=False, save_results=True, send_telegram=True):
+    def run_ai_prediction(self, market_data, test_mode=False, reasoning_mode=False, save_results=True, send_telegram=True):
         """Complete AI prediction workflow"""
         try:
-            mode_text = "🧪 TEST MODE" if test_mode else "🚀 PRODUCTION MODE"
+            # Determine mode text
+            if reasoning_mode:
+                mode_text = "🧠 REASONING MODE"
+            elif test_mode:
+                mode_text = "🧪 TEST MODE"
+            else:
+                mode_text = "🚀 PRODUCTION MODE"
+                
             print("\n" + "="*50)
             print(f"🤖 STARTING AI PREDICTION SYSTEM - {mode_text}")
             print("="*50)
             
-            # Generate AI prediction
-            ai_result = self.get_ai_prediction(market_data)
+            # Generate AI prediction with reasoning mode if enabled
+            ai_result = self.get_ai_prediction(market_data, reasoning_mode)
             
             if "error" in ai_result:
                 print(f"[CRITICAL] AI prediction failed: {ai_result['error']}")
                 return None
             
-            # Save prediction if requested
+            # Prepare prediction data (no saving)
             if save_results:
                 saved_data = self.save_ai_prediction(ai_result, market_data, test_mode)
                 if saved_data:
-                    mode_text = "test file" if test_mode else "database and file"
-                    print(f"[INFO] ✅ AI prediction saved to {mode_text}")
+                    print(f"[INFO] ✅ AI prediction data prepared")
             
             # Send Telegram message if requested
             if send_telegram and self.config["telegram"]["enabled"]:
-                telegram_success = self.send_ai_telegram(ai_result, market_data, test_mode)
+                telegram_success = self.send_ai_telegram(ai_result, market_data, test_mode, reasoning_mode)
                 if not telegram_success:
                     print("[WARN] Telegram sending failed")
             
@@ -1027,10 +1186,10 @@ STOP HERE. Keep under 600 words total. Be precise and actionable."""
             print(f"[CRITICAL] AI prediction workflow failed: {e}")
             return None
 
-    async def generate_prediction(self, market_data, test_mode=False):
+    async def generate_prediction(self, market_data, test_mode=False, reasoning_mode=False):
         """Generate AI prediction (async wrapper for compatibility)"""
         try:
-            return self.run_ai_prediction(market_data, test_mode, save_results=True, send_telegram=True)
+            return self.run_ai_prediction(market_data, test_mode, reasoning_mode, save_results=True, send_telegram=True)
         except Exception as e:
             print(f"[ERROR] AI prediction generation failed: {e}")
             return None
