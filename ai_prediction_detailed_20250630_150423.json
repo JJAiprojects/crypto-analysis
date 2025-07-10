@@ -1,0 +1,31 @@
+{
+  "timestamp": "2025-06-30T15:04:23.629918+00:00",
+  "date": "2025-06-30",
+  "session": "15:04",
+  "type": "ai_prediction_detailed",
+  "test_mode": true,
+  "prediction": "Based on the application of the 8-step Enhanced Decision Framework, the following trading outlook has been determined:\n\nThe real-time trend validation data suggest a bearish trend for both BTC and ETH, with a confidence level of 70% and 50% respectively. The trends are aligned and a reversal alert has been triggered.\n\nThe weighted bias analysis also points towards a bearish trend with a moderate score of 40.0%. The order book, liquidation, and volatility strengths stand at 45.4%, 50.0%, and 17.5%, respectively. This leads to a decision to use a bearish bias considering the weighted score is less than 70%.\n\nReal-time crowding check does not indicate any crowding, hence there is no need to override the bias decision from the previous step.\n\nIn terms of adaptive risk management, there is no ATR spike or opposite movement detected. This implies that volatility is not high and hence, the position size remains unaffected.\n\nThe multi-timeframe confirmation has a neutral 4h SMA20 Alignment, and hence the final confidence level remains at the calculated 56%.\n\nTaking all these factors into account, the final trading outlook is BEARISH with a confidence level of 56%. The suggested position size is 75% of your trading capital. This decision is based on the current market trend, weighted bias analysis, risk management measures, and multi-timeframe confirmation. Please consider your personal risk tolerance before making any trading decisions.",
+  "model": "gpt-4",
+  "data_points_used": 54,
+  "prompt_length": 2119,
+  "response_length": 1452,
+  "market_data": {
+    "btc_price": 107009,
+    "eth_price": 2445.6,
+    "btc_rsi": 50.4799585827906,
+    "eth_rsi": 43.09634139770462,
+    "fear_greed": 66
+  },
+  "ai_prediction": "Based on the application of the 8-step Enhanced Decision Framework, the following trading outlook has been determined:\n\nThe real-time trend validation data suggest a bearish trend for both BTC and ETH, with a confidence level of 70% and 50% respectively. The trends are aligned and a reversal alert has been triggered.\n\nThe weighted bias analysis also points towards a bearish trend with a moderate score of 40.0%. The order book, liquidation, and volatility strengths stand at 45.4%, 50.0%, and 17.5%, respectively. This leads to a decision to use a bearish bias considering the weighted score is less than 70%.\n\nReal-time crowding check does not indicate any crowding, hence there is no need to override the bias decision from the previous step.\n\nIn terms of adaptive risk management, there is no ATR spike or opposite movement detected. This implies that volatility is not high and hence, the position size remains unaffected.\n\nThe multi-timeframe confirmation has a neutral 4h SMA20 Alignment, and hence the final confidence level remains at the calculated 56%.\n\nTaking all these factors into account, the final trading outlook is BEARISH with a confidence level of 56%. The suggested position size is 75% of your trading capital. This decision is based on the current market trend, weighted bias analysis, risk management measures, and multi-timeframe confirmation. Please consider your personal risk tolerance before making any trading decisions.",
+  "professional_analysis": null,
+  "ml_predictions": null,
+  "risk_analysis": null,
+  "validation_points": [],
+  "final_accuracy": null,
+  "ml_processed": false,
+  "hourly_validated": false,
+  "last_validation": null,
+  "trade_metrics": null,
+  "validation_status": "PENDING",
+  "validation_error": ""
+}

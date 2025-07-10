@@ -44,5 +44,11 @@
         "enabled": false,
         "send_telegram": false,
         "output_prefix": "test_"
+    },
+    "reasoning_mode": {
+        "enabled": false,
+        "show_thought_process": true,
+        "send_separate_message": true,
+        "include_framework_steps": true
     }
 }

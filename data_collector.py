@@ -680,6 +680,14 @@ class CryptoDataCollector:
                     tr_values.append(tr)
                 atr = sum(tr_values[-14:]) / 14
                 
+                # Calculate ATR-based support and resistance levels
+                atr_support = current_price - (1.5 * atr) if atr > 0 else current_price * 0.98
+                atr_resistance = current_price + (1.5 * atr) if atr > 0 else current_price * 1.02
+                
+                # Calculate SMA-based support and resistance levels
+                sma_support = sma14 * 0.98
+                sma_resistance = sma14 * 1.02
+                
                 # Determine trend
                 trend = "neutral"
                 if sma7 > sma14:
@@ -791,9 +799,13 @@ class CryptoDataCollector:
                     "volume_trend": volume_trend,
                     "signal": signal,
                     "signal_confidence": signal_confidence,
-                    "support": nearest_support,
-                    "resistance": nearest_resistance,
-                    "atr": atr,
+                    "support": nearest_support,           # PRIMARY - Pivot point method
+                    "resistance": nearest_resistance,     # PRIMARY - Pivot point method
+                    "atr_support": atr_support,          # REFERENCE - ATR method
+                    "atr_resistance": atr_resistance,    # REFERENCE - ATR method
+                    "sma_support": sma_support,          # REFERENCE - SMA method
+                    "sma_resistance": sma_resistance,    # REFERENCE - SMA method
+                    "atr": atr,                          # Raw ATR for risk management
                     "volatility": volatility,
                     "risk_level": risk_level,
                     "key_levels": {

@@ -1,0 +1,31 @@
+{
+  "timestamp": "2025-06-30T15:04:23.629918+00:00",
+  "date": "2025-06-30",
+  "session": "15:04",
+  "type": "ai_prediction_production",
+  "test_mode": true,
+  "prediction": "\u2501\u2501\u2501 \ud83d\udcca EXECUTIVE SUMMARY \u2501\u2501\u2501\n\n- Fear & Greed: 27 (FEAR)\n- Position Size: 75%\n- Market Bias: BEARISH - 56%\n- Market Structure: SIDEWAYS\n- Risk Level: MEDIUM\n- Position Crowding: NO\n\n\u2501\u2501\u2501 \ud83c\udfaf BTC EXECUTION PLAN - BEARISH \u2501\u2501\u2501\n\n\ud83d\udcb0 Current: $58,000\n\u23f1\ufe0f Timeframe: 4 hours\n\ud83d\udccd Entry: $57,800 - $57,600\n\ud83d\uded1 SL: $59,000 (2.5%)\n\ud83c\udfaf TP 1: $56,000 (3.1%)\n\ud83c\udfaf TP 2: $54,500 (5.7%)\n\u2696\ufe0f Risk/Reward: 2.28:1\n\ud83d\udcca Confidence: 56%\n\ud83d\udca7 Liquidation Risk: MEDIUM\n\n\u2501\u2501\u2501 \ud83c\udfaf ETH EXECUTION PLAN - BEARISH \u2501\u2501\u2501\n\n\ud83d\udcb0 Current: $4,000\n\u23f1\ufe0f Timeframe: 4 hours\n\ud83d\udccd Entry: $3,950 - $3,900\n\ud83d\uded1 SL: $4,100 (4.0%)\n\ud83c\udfaf TP 1: $3,800 (4.0%)\n\ud83c\udfaf TP 2: $3,700 (6.7%)\n\u2696\ufe0f Risk/Reward: 1.67:1\n\ud83d\udcca Confidence: 56%\n\ud83d\udca7 Liquidation Risk: MEDIUM\n\n\u2501\u2501\u2501 \u26a0\ufe0f RISK NOTES \u2501\u2501\u2501\n\n- Correlation Risk: BTC and ETH are currently showing high correlation. Be mindful of this when setting stop loss and take profit levels.\n- Volatility Regime: Increased volatility detected - potential for larger than expected price movements.\n- Crowding Alert: No crowding detected at this time.\n- Economic Impact: No significant economic events expected to impact the market in the next 24 hours.",
+  "model": "gpt-4",
+  "data_points_used": 54,
+  "prompt_length": 2860,
+  "response_length": 1082,
+  "market_data": {
+    "btc_price": 107009,
+    "eth_price": 2445.6,
+    "btc_rsi": 50.4799585827906,
+    "eth_rsi": 43.09634139770462,
+    "fear_greed": 66
+  },
+  "ai_prediction": "\u2501\u2501\u2501 \ud83d\udcca EXECUTIVE SUMMARY \u2501\u2501\u2501\n\n- Fear & Greed: 27 (FEAR)\n- Position Size: 75%\n- Market Bias: BEARISH - 56%\n- Market Structure: SIDEWAYS\n- Risk Level: MEDIUM\n- Position Crowding: NO\n\n\u2501\u2501\u2501 \ud83c\udfaf BTC EXECUTION PLAN - BEARISH \u2501\u2501\u2501\n\n\ud83d\udcb0 Current: $58,000\n\u23f1\ufe0f Timeframe: 4 hours\n\ud83d\udccd Entry: $57,800 - $57,600\n\ud83d\uded1 SL: $59,000 (2.5%)\n\ud83c\udfaf TP 1: $56,000 (3.1%)\n\ud83c\udfaf TP 2: $54,500 (5.7%)\n\u2696\ufe0f Risk/Reward: 2.28:1\n\ud83d\udcca Confidence: 56%\n\ud83d\udca7 Liquidation Risk: MEDIUM\n\n\u2501\u2501\u2501 \ud83c\udfaf ETH EXECUTION PLAN - BEARISH \u2501\u2501\u2501\n\n\ud83d\udcb0 Current: $4,000\n\u23f1\ufe0f Timeframe: 4 hours\n\ud83d\udccd Entry: $3,950 - $3,900\n\ud83d\uded1 SL: $4,100 (4.0%)\n\ud83c\udfaf TP 1: $3,800 (4.0%)\n\ud83c\udfaf TP 2: $3,700 (6.7%)\n\u2696\ufe0f Risk/Reward: 1.67:1\n\ud83d\udcca Confidence: 56%\n\ud83d\udca7 Liquidation Risk: MEDIUM\n\n\u2501\u2501\u2501 \u26a0\ufe0f RISK NOTES \u2501\u2501\u2501\n\n- Correlation Risk: BTC and ETH are currently showing high correlation. Be mindful of this when setting stop loss and take profit levels.\n- Volatility Regime: Increased volatility detected - potential for larger than expected price movements.\n- Crowding Alert: No crowding detected at this time.\n- Economic Impact: No significant economic events expected to impact the market in the next 24 hours.",
+  "professional_analysis": null,
+  "ml_predictions": null,
+  "risk_analysis": null,
+  "validation_points": [],
+  "final_accuracy": null,
+  "ml_processed": false,
+  "hourly_validated": false,
+  "last_validation": null,
+  "trade_metrics": null,
+  "validation_status": "PENDING",
+  "validation_error": ""
+}

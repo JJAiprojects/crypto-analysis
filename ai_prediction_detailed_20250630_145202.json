@@ -1,0 +1,31 @@
+{
+  "timestamp": "2025-06-30T14:52:02.122447+00:00",
+  "date": "2025-06-30",
+  "session": "14:52",
+  "type": "ai_prediction_detailed",
+  "test_mode": true,
+  "prediction": "Based on the real-time trend validation and the weighted bias analysis, it is evident that both BTC and ETH are currently in a bearish trend. This is further confirmed by a strong weighted score of 26.5%, which is a strong bearish signal. \n\nHowever, despite the bearish trend, there is no crowding detected in the market, which means we're not likely to see any sudden and drastic price drops due to mass sell-offs.\n\nIn addition, the adaptive risk management indicates that we don't have any significant spikes in volatility or any significant opposite movement in the market, meaning the market is relatively stable despite the bearish trend.\n\nRegarding the multi-timeframe confirmation, the 4-hour SMA20 alignment is neutral, which does not provide us with any additional confidence in our trading decision.\n\nTaking all of these factors into consideration, the final confidence in our trading decision is 47%.\n\nTherefore, based on the current market conditions, my recommendation would be to adopt a bearish trading strategy for both BTC and ETH. However, given the 47% confidence level, one should proceed with caution. Traders should be prepared for potential market fluctuations and adjust their positions accordingly. \n\nKeep in mind that while the current market conditions and trends provide us with an idea of what might happen, they do not guarantee any results. As always, it's crucial to follow sound risk management principles and never invest more than what you're willing to lose.\n\nLastly, it is important to mention that all the indicators are considered in this analysis, which provides a comprehensive view of the market.",
+  "model": "gpt-4",
+  "data_points_used": 54,
+  "prompt_length": 2116,
+  "response_length": 1638,
+  "market_data": {
+    "btc_price": 107257,
+    "eth_price": 2459.98,
+    "btc_rsi": 50.88316753777462,
+    "eth_rsi": 43.87832073841428,
+    "fear_greed": 66
+  },
+  "ai_prediction": "Based on the real-time trend validation and the weighted bias analysis, it is evident that both BTC and ETH are currently in a bearish trend. This is further confirmed by a strong weighted score of 26.5%, which is a strong bearish signal. \n\nHowever, despite the bearish trend, there is no crowding detected in the market, which means we're not likely to see any sudden and drastic price drops due to mass sell-offs.\n\nIn addition, the adaptive risk management indicates that we don't have any significant spikes in volatility or any significant opposite movement in the market, meaning the market is relatively stable despite the bearish trend.\n\nRegarding the multi-timeframe confirmation, the 4-hour SMA20 alignment is neutral, which does not provide us with any additional confidence in our trading decision.\n\nTaking all of these factors into consideration, the final confidence in our trading decision is 47%.\n\nTherefore, based on the current market conditions, my recommendation would be to adopt a bearish trading strategy for both BTC and ETH. However, given the 47% confidence level, one should proceed with caution. Traders should be prepared for potential market fluctuations and adjust their positions accordingly. \n\nKeep in mind that while the current market conditions and trends provide us with an idea of what might happen, they do not guarantee any results. As always, it's crucial to follow sound risk management principles and never invest more than what you're willing to lose.\n\nLastly, it is important to mention that all the indicators are considered in this analysis, which provides a comprehensive view of the market.",
+  "professional_analysis": null,
+  "ml_predictions": null,
+  "risk_analysis": null,
+  "validation_points": [],
+  "final_accuracy": null,
+  "ml_processed": false,
+  "hourly_validated": false,
+  "last_validation": null,
+  "trade_metrics": null,
+  "validation_status": "PENDING",
+  "validation_error": ""
+}

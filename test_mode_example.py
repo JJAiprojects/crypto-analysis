@@ -98,7 +98,7 @@ def simulate_prediction_workflow(test_mode=False):
     print(f"   ✅ IDENTICAL for both modes")
     
     print(f"\n2️⃣ AI Prediction Generation:")
-    print(f"   🤖 OpenAI GPT-4 API call")
+    print(f"   🤖 OpenAI GPT-4o API call")
     print(f"   📈 {prediction_data['prediction']}")
     print(f"   🎯 Confidence: {prediction_data['confidence']*100:.1f}%")
     print(f"   ✅ IDENTICAL for both modes")
