@@ -419,18 +419,32 @@ class CryptoDataCollector:
     # Crypto Market Data
     # ----------------------------
     def get_crypto_data(self):
-        """Get basic crypto price data"""
-        url = "https://api.coingecko.com/api/v3/simple/price"
-        params = {"ids": "bitcoin,ethereum", "vs_currencies": "usd"}
-        headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
-        
-        data = self.resilient_request(url, params=params, headers=headers)
-        if data:
-            return {
-                "btc": data["bitcoin"]["usd"], 
-                "eth": data["ethereum"]["usd"]
-            }
-        return {"btc": None, "eth": None}
+        """Get basic crypto price data from Binance (replacing CoinGecko)"""
+        try:
+            url = "https://api.binance.com/api/v3/ticker/price"
+            symbols = ["BTCUSDT", "ETHUSDT"]
+            
+            data = {}
+            for symbol in symbols:
+                params = {"symbol": symbol}
+                result = self.resilient_request(url, params=params)
+                if result and "price" in result:
+                    price = float(result["price"])
+                    if symbol == "BTCUSDT":
+                        data["btc"] = price
+                    elif symbol == "ETHUSDT":
+                        data["eth"] = price
+            
+            if data.get("btc") and data.get("eth"):
+                print(f"[INFO] ✅ Crypto prices from Binance: BTC ${data['btc']:,.0f}, ETH ${data['eth']:,.0f}")
+                return data
+            else:
+                print("[WARN] ⚠️ Incomplete crypto price data from Binance")
+                return {"btc": None, "eth": None}
+                
+        except Exception as e:
+            print(f"[ERROR] Binance crypto price retrieval failed: {e}")
+            return {"btc": None, "eth": None}
 
     def get_futures_sentiment(self):
         """Get futures market sentiment data"""
@@ -584,25 +598,35 @@ class CryptoDataCollector:
         return None
 
     def get_trading_volumes(self):
-        """Get trading volumes"""
+        """Get trading volumes from Binance (replacing CoinGecko)"""
         try:
-            data = self.resilient_request(
-                "https://api.coingecko.com/api/v3/coins/markets", 
-                params={"vs_currency": "usd", "ids": "bitcoin,ethereum"}
-            )
-            if data:
-                volumes = {}
-                for coin in data:
-                    coin_id = coin["id"]
-                    volumes[coin_id] = coin["total_volume"]
-                    if coin_id == "bitcoin":
-                        volumes["btc_volume"] = coin["total_volume"]
-                    elif coin_id == "ethereum":
-                        volumes["eth_volume"] = coin["total_volume"]
+            url = "https://api.binance.com/api/v3/ticker/24hr"
+            symbols = ["BTCUSDT", "ETHUSDT"]
+            
+            volumes = {}
+            for symbol in symbols:
+                params = {"symbol": symbol}
+                result = self.resilient_request(url, params=params)
+                if result and "volume" in result and "quoteVolume" in result:
+                    # quoteVolume is the volume in USDT (quote currency)
+                    volume_usdt = float(result["quoteVolume"])
+                    if symbol == "BTCUSDT":
+                        volumes["btc_volume"] = volume_usdt
+                        volumes["bitcoin"] = volume_usdt
+                    elif symbol == "ETHUSDT":
+                        volumes["eth_volume"] = volume_usdt
+                        volumes["ethereum"] = volume_usdt
+            
+            if volumes.get("btc_volume") and volumes.get("eth_volume"):
+                print(f"[INFO] ✅ Trading volumes from Binance: BTC ${volumes['btc_volume']/1e9:.1f}B, ETH ${volumes['eth_volume']/1e9:.1f}B")
                 return volumes
+            else:
+                print("[WARN] ⚠️ Incomplete volume data from Binance")
+                return {"btc_volume": None, "eth_volume": None}
+                
         except Exception as e:
-            print(f"[ERROR] Trading Volumes: {e}")
-        return {"btc_volume": None, "eth_volume": None}
+            print(f"[ERROR] Binance volume retrieval failed: {e}")
+            return {"btc_volume": None, "eth_volume": None}
 
     def get_technical_indicators(self):
         """Get comprehensive technical indicators"""
@@ -1829,24 +1853,24 @@ class CryptoDataCollector:
         print("="*80)
 
     def collect_all_data(self):
-        """Collect all market data with CoinGecko calls separated to avoid rate limiting"""
+        """Collect all market data with minimal CoinGecko calls to avoid rate limiting"""
         print("[INFO] Starting comprehensive data collection...")
         
-        # Separate CoinGecko calls to run sequentially (avoid rate limiting)
+        # Minimal CoinGecko calls - only essential data that can't be obtained elsewhere
         coingecko_tasks = {
-            "crypto": self.get_crypto_data,
             "btc_dominance": self.get_btc_dominance,
             "market_cap": self.get_global_market_cap,
-            "volumes": self.get_trading_volumes,
         }
         
-        # Other API calls can run in parallel
+        # Other API calls can run in parallel (including Binance-based crypto and volumes)
         parallel_tasks = {
+            "crypto": self.get_crypto_data,  # ✅ MOVED: Now uses Binance
+            "volumes": self.get_trading_volumes,  # ✅ MOVED: Now uses Binance
             "futures": self.get_futures_sentiment,
             "fear_greed": self.get_fear_greed_index,
             "technical_indicators": self.get_technical_indicators,
             "historical_data": self.get_historical_price_data,
-            "volatility_regime": self.get_volatility_regime  # NEW: Added volatility regime
+            "volatility_regime": self.get_volatility_regime
         }
         
         if self.config["indicators"].get("include_macroeconomic", True):
@@ -1897,8 +1921,8 @@ class CryptoDataCollector:
         
         results = {}
         
-        # STEP 1: Run CoinGecko calls sequentially to avoid rate limiting
-        print("[INFO] Running CoinGecko API calls sequentially...")
+        # STEP 1: Run minimal CoinGecko calls sequentially to avoid rate limiting
+        print("[INFO] Running minimal CoinGecko API calls sequentially...")
         for task_name, func in coingecko_tasks.items():
             try:
                 results[task_name] = func()
@@ -1909,8 +1933,8 @@ class CryptoDataCollector:
                 print(f"[ERROR] ❌ Task {task_name} failed: {e}")
                 results[task_name] = None
         
-        # STEP 2: Run other API calls in parallel
-        print("[INFO] Running other API calls in parallel...")
+        # STEP 2: Run other API calls in parallel (including Binance-based crypto and volumes)
+        print("[INFO] Running other API calls in parallel (including Binance crypto/volumes)...")
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(parallel_tasks)) as executor:
             future_to_task = {executor.submit(func): task_name for task_name, func in parallel_tasks.items()}
             
@@ -2125,14 +2149,14 @@ class CryptoDataCollector:
         validation_issues = []
         
         try:
-            # Check price consistency
+            # Check price consistency (both now from Binance, but different endpoints)
             crypto_btc = results.get("crypto", {}).get("btc")
             tech_btc = results.get("technical_indicators", {}).get("BTC", {}).get("price")
             
             if crypto_btc and tech_btc:
                 price_diff = abs(crypto_btc - tech_btc) / crypto_btc
-                if price_diff > 0.05:  # 5% difference threshold
-                    validation_issues.append(f"BTC price inconsistency: CoinGecko ${crypto_btc:,.0f} vs Binance ${tech_btc:,.0f} ({price_diff*100:.1f}% diff)")
+                if price_diff > 0.01:  # 1% difference threshold (both from Binance)
+                    validation_issues.append(f"BTC price inconsistency: Binance ticker ${crypto_btc:,.0f} vs Binance klines ${tech_btc:,.0f} ({price_diff*100:.1f}% diff)")
             
             # Check volume consistency
             volumes = results.get("volumes", {})
