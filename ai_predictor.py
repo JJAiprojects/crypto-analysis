@@ -914,8 +914,8 @@ DO NOT include price targets, entry points, stop losses, or trading recommendati
                         "temperature": 0.7
                     }
                     
-                    print(f"[INFO] Sending request to xAI API (timeout: 60s)...")
-                    response = requests.post(url, headers=headers, json=payload, timeout=60)
+                    print(f"[INFO] Sending request to xAI API (timeout: 120s)...")
+                    response = requests.post(url, headers=headers, json=payload, timeout=120)
                     response.raise_for_status()
                     result = response.json()
                     
