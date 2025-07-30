@@ -3,6 +3,7 @@
 import os
 import json
 import time
+import requests
 from datetime import datetime, timezone
 from openai import OpenAI
 from telegram_utils import send_telegram_message
@@ -10,12 +11,48 @@ from telegram_utils import send_telegram_message
 class AIPredictor:
     def __init__(self, config):
         self.config = config
-        self.openai_key = os.getenv("OPENAI_API_KEY") or config["api_keys"]["openai"]
         
-        if not self.openai_key or self.openai_key == "YOUR_OPENAI_API_KEY":
-            raise ValueError("OpenAI API key not configured")
+        # Initialize AI provider configuration
+        self.ai_provider_config = config.get("ai_provider", {
+            "primary": "xai",
+            "fallback": "openai",
+            "enabled": {
+                "xai": True,
+                "openai": False
+            }
+        })
         
-        self.client = OpenAI(api_key=self.openai_key)
+        # Get API keys
+        self.xai_key = os.getenv("XAI_API_KEY") or config["api_keys"].get("xai")
+        self.openai_key = os.getenv("OPENAI_API_KEY") or config["api_keys"].get("openai")
+        
+        # Initialize clients
+        self.xai_client = None
+        self.openai_client = None
+        
+        # Setup primary provider
+        self.primary_provider = self.ai_provider_config.get("primary", "xai")
+        self.fallback_provider = self.ai_provider_config.get("fallback", "openai")
+        
+        # Initialize enabled providers
+        if self.ai_provider_config.get("enabled", {}).get("xai", True) and self.xai_key and self.xai_key != "YOUR_XAI_API_KEY":
+            print("[INFO] ✅ xAI Grok client ready (direct HTTP)")
+            self.xai_client = True  # Just mark as available
+        
+        if self.ai_provider_config.get("enabled", {}).get("openai", False) and self.openai_key and self.openai_key != "YOUR_OPENAI_API_KEY":
+            try:
+                self.openai_client = OpenAI(api_key=self.openai_key)
+                print("[INFO] ✅ OpenAI client initialized")
+            except Exception as e:
+                print(f"[WARN] Failed to initialize OpenAI client: {e}")
+        
+        # Validate at least one provider is available
+        if not self.xai_client and not self.openai_client:
+            raise ValueError("No AI provider configured. Please set XAI_API_KEY or OPENAI_API_KEY")
+        
+        print(f"[INFO] Primary AI provider: {self.primary_provider}")
+        if self.fallback_provider != self.primary_provider:
+            print(f"[INFO] Fallback AI provider: {self.fallback_provider}")
 
     def create_comprehensive_prompt(self, market_data):
         """Create comprehensive AI prompt using all 50+ data points with 8-step decision framework"""
@@ -824,71 +861,106 @@ STOP HERE. Keep under 600 words total. Be precise and actionable."""
             
             # Modify system prompt for reasoning mode
             if reasoning_mode:
-                system_prompt = """You are a professional cryptocurrency trader and market analyst with 15+ years of experience. 
+                system_prompt = """You are a professional cryptocurrency trader with 15+ years of experience. 
 
-CRITICAL: You are in REASONING MODE. You MUST show your complete thought process.
+IMPORTANT: You are in REASONING MODE. DO NOT provide final trading recommendations or price targets.
 
-REQUIRED FORMAT - DO NOT SKIP ANY SECTION:
+Instead, show ONLY your step-by-step analysis process:
 
-━━━ STEP-BY-STEP REASONING ━━━
-Step 0.5: Sideways Market Detection & Trend Validation
-[Explain how you analyze if market is sideways or trending]
+1. Market Trend Analysis: [Explain what you see in the trend data]
+2. Technical Indicators Review: [Explain what the indicators tell you]  
+3. Volume and Smart Money Analysis: [Explain volume patterns and smart money flow]
+4. Sentiment Assessment: [Explain market sentiment and crowd behavior]
+5. Risk Evaluation: [Explain what risks you identify]
+6. Final Decision and Confidence: [Explain your conclusion and confidence level]
 
-Step 1: Real-time Trend Validation
-[Explain your trend analysis and confirmation requirements]
-
-Step 2: Enhanced Timeframe Sensitivity
-[Explain your timeframe analysis and volatility considerations]
-
-Step 3: Smart Money & Volume Gate Strengthening
-[Explain volume analysis and smart money indicators]
-
-Step 4: Dynamic Bias Adjustment
-[Explain how you adjust bias based on current conditions]
-
-Step 5: Sentiment & Crowding Checks
-[Explain sentiment analysis and position crowding assessment]
-
-Step 6: Adaptive Risk Management
-[Explain risk assessment and position sizing decisions]
-
-Step 7: Breakout Confirmation Filters
-[Explain breakout analysis and confirmation requirements]
-
-Step 8: Final Decision & Confidence
-[Explain your final decision and confidence level]
-
-MANDATORY: You MUST show your reasoning for each step. Do not skip the reasoning section. 
-
-IMPORTANT: In reasoning mode, ONLY provide the step-by-step reasoning. Do NOT include any final prediction or trading recommendations."""
+DO NOT include price targets, entry points, stop losses, or trading recommendations. Only show your analysis process."""
             else:
                 system_prompt = "You are a professional cryptocurrency trader and market analyst with 15+ years of experience. Provide detailed, actionable trading analysis."
             
-            # Make OpenAI API call
-            response = self.client.chat.completions.create(
-                model="gpt-4o",
-                messages=[
-                    {
-                        "role": "system", 
-                        "content": system_prompt
-                    },
-                    {
-                        "role": "user", 
-                        "content": prompt
+            # Prepare messages for API call
+            messages = [
+                {
+                    "role": "system", 
+                    "content": system_prompt
+                },
+                {
+                    "role": "user", 
+                    "content": prompt
+                }
+            ]
+            
+            # Try primary provider first, then fallback
+            ai_prediction = None
+            model_used = None
+            provider_used = None
+            
+            # Try primary provider
+            if self.primary_provider == "xai" and self.xai_client:
+                try:
+                    print(f"[INFO] 🚀 Using xAI Grok (primary provider)")
+                    
+                    # Direct HTTP request to xAI API
+                    url = "https://api.x.ai/v1/chat/completions"
+                    headers = {
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {self.xai_key}"
                     }
-                ],
-                max_tokens=3000 if reasoning_mode else 1500,  # Much more tokens for detailed reasoning
-                temperature=0.7
-            )
+                    
+                    payload = {
+                        "model": "grok-4",
+                        "messages": messages,
+                        "max_tokens": 8000 if reasoning_mode else 4000,  # Increased for xAI's larger context
+                        "temperature": 0.7
+                    }
+                    
+                    print(f"[INFO] Sending request to xAI API (timeout: 60s)...")
+                    response = requests.post(url, headers=headers, json=payload, timeout=60)
+                    response.raise_for_status()
+                    result = response.json()
+                    
+                    ai_prediction = result["choices"][0]["message"]["content"]
+                    finish_reason = result["choices"][0].get("finish_reason", "unknown")
+                    model_used = "grok-4"
+                    provider_used = "xai"
+                    print(f"[INFO] ✅ xAI Grok prediction generated successfully (finish_reason: {finish_reason})")
+                    
+                    # Check if response was cut off
+                    if finish_reason == "length":
+                        print("[WARN] ⚠️ Response was cut off due to token limit")
+                    elif finish_reason == "stop":
+                        print("[INFO] ✅ Response completed normally")
+                except Exception as e:
+                    print(f"[WARN] xAI Grok failed: {e}")
+                    ai_prediction = None
             
-            ai_prediction = response.choices[0].message.content
+            # Try fallback provider if primary failed
+            if ai_prediction is None and self.fallback_provider == "openai" and self.openai_client:
+                try:
+                    print(f"[INFO] 🔄 Using OpenAI (fallback provider)")
+                    response = self.openai_client.chat.completions.create(
+                        model="gpt-4o",
+                        messages=messages,
+                        max_tokens=3000 if reasoning_mode else 1500,
+                        temperature=0.7
+                    )
+                    ai_prediction = response.choices[0].message.content
+                    model_used = "gpt-4o"
+                    provider_used = "openai"
+                    print("[INFO] ✅ OpenAI prediction generated successfully")
+                except Exception as e:
+                    print(f"[WARN] OpenAI fallback failed: {e}")
+                    ai_prediction = None
             
-            print("[INFO] ✅ AI prediction generated successfully")
+            # If both providers failed
+            if ai_prediction is None:
+                raise Exception("All AI providers failed")
             
             return {
                 "prediction": ai_prediction,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
-                "model": "gpt-4o",
+                "model": model_used,
+                "provider": provider_used,
                 "prompt_length": len(prompt),
                 "response_length": len(ai_prediction),
                 "data_points_used": self._count_available_data(market_data),
@@ -900,7 +972,8 @@ IMPORTANT: In reasoning mode, ONLY provide the step-by-step reasoning. Do NOT in
             return {
                 "prediction": f"AI prediction unavailable - Error: {str(e)}",
                 "timestamp": datetime.now(timezone.utc).isoformat(),
-                "model": "gpt-4o",
+                "model": f"{self.primary_provider}-unknown",
+                "provider": self.primary_provider,
                 "error": str(e),
                 "data_points_used": 0,
                 "reasoning_mode": reasoning_mode

@@ -17,7 +17,16 @@ def load_test_config():
     """Load test configuration"""
     return {
         "api_keys": {
+            "xai": os.getenv("XAI_API_KEY", "test_key"),
             "openai": os.getenv("OPENAI_API_KEY", "test_key")
+        },
+        "ai_provider": {
+            "primary": "xai",
+            "fallback": "openai",
+            "enabled": {
+                "xai": True,
+                "openai": False
+            }
         },
         "telegram": {
             "enabled": True,

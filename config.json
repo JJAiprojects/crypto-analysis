@@ -1,8 +1,17 @@
 {
     "api_keys": {
+        "xai": "YOUR_XAI_API_KEY",
         "openai": "YOUR_OPENAI_API_KEY",
         "fred": "YOUR_FRED_API_KEY",
         "alphavantage": "YOUR_ALPHAVANTAGE_API_KEY"
+    },
+    "ai_provider": {
+        "primary": "xai",
+        "fallback": "openai",
+        "enabled": {
+            "xai": true,
+            "openai": false
+        }
     },
     "telegram": {
         "enabled": true,

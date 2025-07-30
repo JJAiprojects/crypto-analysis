@@ -14,6 +14,7 @@ def test_configuration():
     
     # Test environment variables
     env_vars = [
+        "XAI_API_KEY",
         "OPENAI_API_KEY",
         "FRED_API_KEY", 
         "ALPHAVANTAGE_API_KEY",
@@ -38,9 +39,18 @@ def test_configuration():
         
         config = {
             "api_keys": {
+                "xai": os.getenv("XAI_API_KEY", "YOUR_XAI_API_KEY"),
                 "openai": os.getenv("OPENAI_API_KEY", "YOUR_OPENAI_API_KEY"),
                 "fred": os.getenv("FRED_API_KEY", "YOUR_FRED_API_KEY"),
                 "alphavantage": os.getenv("ALPHAVANTAGE_API_KEY", "YOUR_ALPHAVANTAGE_API_KEY")
+            },
+            "ai_provider": {
+                "primary": "xai",
+                "fallback": "openai",
+                "enabled": {
+                    "xai": True,
+                    "openai": False
+                }
             },
             "telegram": {
                 "enabled": True,
@@ -83,9 +93,10 @@ def test_configuration():
         
         # API keys
         api_valid = (
+            config["api_keys"]["xai"] != "YOUR_XAI_API_KEY" or
             config["api_keys"]["openai"] != "YOUR_OPENAI_API_KEY"
         )
-        print(f"  {'✅' if api_valid else '❌'} OpenAI API Key: {'Valid' if api_valid else 'Invalid'}")
+        print(f"  {'✅' if api_valid else '❌'} AI API Key: {'Valid' if api_valid else 'Invalid'}")
         
         return config, prod_valid, test_valid, api_valid
         
@@ -147,7 +158,7 @@ async def test_ai_predictor(test_mode=False):
             return False
             
         if not api_valid:
-            print("⚠️ OpenAI API key not configured - skipping AI test")
+            print("⚠️ AI API key not configured - skipping AI test")
             return False
         
         if test_mode and not test_valid:

@@ -5,7 +5,11 @@
 # API KEYS (Required for full functionality)
 # =============================================================================
 
-# OpenAI API Key (Required for AI predictions)
+# xAI Grok API Key (Primary AI provider for predictions)
+# Get from: https://console.x.ai/
+XAI_API_KEY=your-xai-api-key-here
+
+# OpenAI API Key (Fallback AI provider - optional)
 # Get from: https://platform.openai.com/api-keys
 OPENAI_API_KEY=sk-your-openai-api-key-here
 

@@ -27,9 +27,18 @@ def load_config():
     
     config = {
         "api_keys": {
+            "xai": os.getenv("XAI_API_KEY"),
             "openai": os.getenv("OPENAI_API_KEY"),
             "fred": os.getenv("FRED_API_KEY"), 
             "alphavantage": os.getenv("ALPHAVANTAGE_API_KEY")
+        },
+        "ai_provider": {
+            "primary": "xai",
+            "fallback": "openai",
+            "enabled": {
+                "xai": True,
+                "openai": False
+            }
         },
         "telegram": {
             "enabled": True,
@@ -77,8 +86,8 @@ def load_config():
     
     # Validate critical configuration
     missing_keys = []
-    if not config["api_keys"]["openai"]:
-        missing_keys.append("OPENAI_API_KEY")
+    if not config["api_keys"]["xai"] and not config["api_keys"]["openai"]:
+        missing_keys.append("XAI_API_KEY or OPENAI_API_KEY")
     if not config["telegram"]["bot_token"]:
         missing_keys.append("TELEGRAM_BOT_TOKEN") 
     if not config["telegram"]["chat_id"]:

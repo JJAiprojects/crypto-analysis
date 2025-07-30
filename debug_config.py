@@ -199,6 +199,9 @@ def debug_production_config():
     
     # Check other important env vars
     print("\n🔑 OTHER CREDENTIALS:")
+    xai_key = os.getenv("XAI_API_KEY")
+    print(f"XAI_API_KEY: {'✓ Set' if xai_key else '✗ Missing'}")
+    
     openai_key = os.getenv("OPENAI_API_KEY")
     print(f"OPENAI_API_KEY: {'✓ Set' if openai_key else '✗ Missing'}")
     
