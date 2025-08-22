@@ -2130,7 +2130,7 @@ class CryptoDataCollector:
         
         # Count successful data points - ACCURATE COUNT
         data_points_collected = self._count_data_points(results)
-        print(f"\n[INFO] 📊 Data collection complete: {data_points_collected}/53 data points")
+        print(f"\n[INFO] 📊 Data collection complete: {data_points_collected}/57 data points")
         
         # Validate network health and correlation data structure
         print(f"\n🔍 VALIDATING NETWORK HEALTH & CORRELATION DATA STRUCTURE...")
@@ -2178,7 +2178,7 @@ class CryptoDataCollector:
         self._investigate_data_quality_issues(results)
         
         # Show missing data points for debugging
-        if data_points_collected < 53:  # Corrected to actual expected count
+        if data_points_collected < 57:  # Corrected to actual expected count
             missing_points = []
             
             # Check each category
@@ -2327,7 +2327,7 @@ class CryptoDataCollector:
         return results
 
     def _count_data_points(self, results):
-        """Count the number of successful data points collected - ACCURATE COUNT (updated to match validation)"""
+        """Count the number of successful data points collected - MATCHES AI PREDICTOR EXACTLY"""
         count = 0
         
         # 1. Crypto Prices (2 points)
@@ -2335,19 +2335,28 @@ class CryptoDataCollector:
         if crypto.get("btc"): count += 1
         if crypto.get("eth"): count += 1
         
-        # 2. Technical Indicators (2 points: 1 per coin)
+        # 2. Technical Indicators (12 points: 6 per coin)
         tech = results.get("technical_indicators", {})
         for coin in ["BTC", "ETH"]:
             coin_data = tech.get(coin, {})
-            if coin_data and coin_data.get('price') is not None: count += 1
-            print(f"    {coin} Technical: {coin_data.get('price') is not None} (1 point)")
+            if coin_data:
+                # Count individual technical indicators
+                if coin_data.get('rsi14') is not None: count += 1
+                if coin_data.get('signal'): count += 1
+                if coin_data.get('support') is not None: count += 1
+                if coin_data.get('resistance') is not None: count += 1
+                if coin_data.get('trend'): count += 1
+                if coin_data.get('volatility'): count += 1
         
-        # 3. Futures Sentiment (2 points: 1 per coin)
+        # 3. Futures Sentiment (8 points: 4 per coin)
         futures = results.get("futures", {})
         for coin in ["BTC", "ETH"]:
             coin_data = futures.get(coin, {})
-            if coin_data and coin_data.get('funding_rate') is not None: count += 1
-            print(f"    {coin} Futures: {coin_data.get('funding_rate') is not None} (1 point)")
+            if coin_data:
+                if coin_data.get('funding_rate') is not None: count += 1
+                if coin_data.get('long_ratio') is not None: count += 1
+                if coin_data.get('short_ratio') is not None: count += 1
+                if coin_data.get('open_interest') is not None: count += 1
         
         # 4. Market Sentiment (3 points)
         if results.get("fear_greed", {}).get("index"): count += 1
@@ -2376,11 +2385,14 @@ class CryptoDataCollector:
         for key in ["gold", "silver", "crude_oil", "natural_gas"]:
             if commodities.get(key) is not None: count += 1
         
-        # 9. Social Metrics (2 points: 1 per coin)
+        # 9. Social Metrics (6 points)
         social = results.get("social_metrics", {})
+        if social.get("forum_posts"): count += 1
+        if social.get("forum_topics"): count += 1
         if social.get("btc_github_stars"): count += 1
         if social.get("eth_github_stars"): count += 1
-        print(f"    Social Metrics: BTC={social.get('btc_github_stars') is not None}, ETH={social.get('eth_github_stars') is not None} (2 points)")
+        if social.get("btc_recent_commits"): count += 1
+        if social.get("eth_recent_commits"): count += 1
         
         # 10. Historical Data (2 points)
         historical = results.get("historical_data", {})
@@ -2617,7 +2629,7 @@ class CryptoDataCollector:
         print(f"    Note: Enhanced data points integrated into main categories above")
         
         # Calculate actual total from individual counts
-        total_expected = 53  # Actual total data points being collected
+        total_expected = 57  # Actual total data points being collected
         print(f"\n    📊 SUMMARY: Counted {data_points_collected}/{total_expected} expected points")
         if data_points_collected != total_expected:
             print(f"    ⚠️  DISCREPANCY: {abs(data_points_collected - total_expected)} points difference")
@@ -2627,7 +2639,7 @@ class CryptoDataCollector:
         print(f"      Collection count: {data_points_collected}")
         print(f"      Validation count: {total_expected}")
         print(f"      Difference: {data_points_collected - total_expected}")
-        print(f"      Expected total: 53 data points")
+        print(f"      Expected total: 57 data points")
 
     def _validate_data_consistency(self, results):
         """Comprehensive data validation with scoring system (0-100%)"""
