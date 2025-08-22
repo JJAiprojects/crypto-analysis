@@ -141,7 +141,7 @@ MARKET DATA HIERARCHY ({data_points_used}/57 indicators):
 🚨 HIGH PRIORITY (Override Traditional S/R & Price Targets):
 • Liquidation BTC: {liquidation_map.get('BTC', {}).get('liquidation_pressure', 'N/A') if liquidation_map else 'API_KEY_MISSING'} | Funding: {f"{liquidation_map.get('BTC', {}).get('funding_rate', 0):.3f}" if liquidation_map and liquidation_map.get('BTC') and liquidation_map.get('BTC', {}).get('funding_rate') is not None else 'N/A'}% | Long/Short zones: {len(liquidation_map.get('BTC', {}).get('nearby_long_liquidations', []))} / {len(liquidation_map.get('BTC', {}).get('nearby_short_liquidations', []))}
 • Liquidation ETH: {liquidation_map.get('ETH', {}).get('liquidation_pressure', 'N/A') if liquidation_map else 'API_KEY_MISSING'} | Funding: {f"{liquidation_map.get('ETH', {}).get('funding_rate', 0):.3f}" if liquidation_map and liquidation_map.get('ETH') and liquidation_map.get('ETH', {}).get('funding_rate') is not None else 'N/A'}% | Long/Short zones: {len(liquidation_map.get('ETH', {}).get('nearby_long_liquidations', []))} / {len(liquidation_map.get('ETH', {}).get('nearby_short_liquidations', []))}
-• Bond Market Signal: 10Y Treasury: {f"{rates_data.get('t10_yield'):.2f}" if rates_data.get('t10_yield') is not None else 'N/A'}% | Risk-Off Threshold: {'BREACHED' if rates_data.get('t10_yield', 0) > 4.5 else 'NORMAL'} | Crypto Impact: {self._assess_treasury_impact(rates_data.get('t10_yield'))}
+• Bond Market Signal: 10Y Treasury: {f"{rates_data.get('t10_yield'):.2f}" if rates_data.get('t10_yield') is not None else 'N/A'}% | Risk-Off Threshold: {'BREACHED' if rates_data.get('t10_yield') is not None and rates_data.get('t10_yield') > 4.5 else 'NORMAL'} | Crypto Impact: {self._assess_treasury_impact(rates_data.get('t10_yield'))}
 
 ⚠️ MEDIUM PRIORITY (Entry Timing & Smart Money Flow):
 • Order Book BTC: {order_book.get('BTC', {}).get('book_signal', 'N/A') if order_book else 'API_KEY_MISSING'} | Imbalance: {f"{order_book.get('BTC', {}).get('imbalance_ratio', 0)*100:.1f}" if order_book and order_book.get('BTC') and order_book.get('BTC', {}).get('imbalance_ratio') is not None else 'N/A'}% | MM: {f"{order_book.get('BTC', {}).get('mm_dominance', 0)*100:.1f}" if order_book and order_book.get('BTC') and order_book.get('BTC', {}).get('mm_dominance') is not None else 'N/A'}%
@@ -911,10 +911,10 @@ STOP HERE. Keep under 600 words total. Be precise and actionable."""
         
             # Treasury yield factor
             rates_data = market_data.get("interest_rates", {})
-            t10_yield = rates_data.get('t10_yield', 0)
-            if t10_yield > 5.0:
+            t10_yield = rates_data.get('t10_yield')
+            if t10_yield is not None and t10_yield > 5.0:
                 risk_factors.append(("treasury", 0.6))
-            elif t10_yield > 4.5:
+            elif t10_yield is not None and t10_yield > 4.5:
                 risk_factors.append(("treasury", 0.8))
             else:
                 risk_factors.append(("treasury", 1.0))
