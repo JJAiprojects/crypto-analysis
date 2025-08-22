@@ -96,11 +96,42 @@ class AIPredictor:
         # Count actual data points being used
         data_points_used = self._count_available_data(market_data)
         
-        prompt = f"""You are a professional crypto trader with 15+ years experience. 
+        # Check data quality and add warnings to prompt
+        data_quality_warnings = []
+        critical_sources = ['order_book_analysis', 'liquidation_heatmap', 'economic_calendar']
+        
+        for source in critical_sources:
+            if not market_data.get(source):
+                data_quality_warnings.append(f"⚠️ {source.replace('_', ' ').title()} data unavailable")
+        
+        # Check for correlation data availability
+        correlation_sources = ['crypto_correlations', 'cross_asset_correlations']
+        for source in correlation_sources:
+            if not market_data.get(source):
+                data_quality_warnings.append(f"⚠️ {source.replace('_', ' ').title()} data unavailable")
+        
+        data_quality_header = ""
+        if data_quality_warnings:
+            data_quality_header = f"""
 
-⚠️ CRITICAL INSTRUCTION: You MUST follow the 8-STEP ENHANCED DECISION FRAMEWORK (Steps 0-8) internally to analyze the data. This framework is MANDATORY and cannot be ignored. Only provide the final CONCISE trading outlook based on this framework.
+🚨 DATA QUALITY WARNINGS:
+{chr(10).join(data_quality_warnings)}
 
-MARKET DATA HIERARCHY ({data_points_used}/54 indicators):
+⚠️ CRITICAL: You are working with incomplete market structure data. 
+   - Order book analysis unavailable: Cannot assess smart money flow
+   - Liquidation heatmap unavailable: Cannot identify price targets
+   - Economic calendar unavailable: Cannot assess market timing risks
+   - Correlation data unavailable: Cannot assess BTC-ETH relationship
+
+⚠️ RECOMMENDATION: If these warnings appear, DO NOT make trading predictions.
+   Instead, explain why predictions would be unreliable and what data is needed.
+"""
+        
+        prompt = f"""You are a professional crypto trader with 15+ years experience.{data_quality_header}
+
+⚠️ CRITICAL INSTRUCTION: You MUST follow the 8-STEP ENHANCED DECISION FRAMEWORK internally to analyze the data. This framework is MANDATORY and cannot be ignored. Only provide the final CONCISE trading outlook based on this framework.
+
+MARKET DATA HIERARCHY ({data_points_used}/57 indicators):
 =========================================================
 
 🔥 SUPER HIGH PRIORITY (Absolute Override - Can Force Flat Position):
@@ -182,6 +213,26 @@ MARKET DATA HIERARCHY ({data_points_used}/54 indicators):
 - Percentages can have 1 decimal: 0.8%, 1.2%
 - Confidence levels are whole numbers: 70%, 75%
 
+📊 DATA INCOMPLETENESS HANDLING:
+- "N/A" or "nan" values: Ignore completely, do not fabricate data
+- Missing data sources: Reduce confidence by 10-15% per missing source
+- Limited data: Flag as "LIMITED_ANALYSIS" and reduce position size
+- API failures: Use available data only, never assume missing values
+
+🔗 CORRELATION ANALYSIS INTEGRATION:
+- BTC-ETH Correlation: Use correlation data for joint positioning decisions
+- High correlation (>0.7): Similar position sizing and timing
+- Low correlation (<0.3): Independent positioning allowed
+- Negative correlation: Consider inverse positioning for diversification
+- Cross-asset correlation: Use market regime data for risk adjustment
+
+🎯 PROBABILISTIC FORECASTING:
+- Confidence levels represent win probability estimates
+- High confidence (75-85%): Strong signal alignment, higher win rate expected
+- Medium confidence (60-74%): Mixed signals, moderate win rate expected  
+- Low confidence (45-59%): Weak signals, lower win rate expected
+- Very low confidence (<45%): Avoid trading, wait for better setup
+
 ENHANCED 8-STEP INTERNAL ANALYSIS FRAMEWORK (Do NOT output these steps):
 ========================================================================
 
@@ -213,6 +264,11 @@ STEP 0.5: SIDEWAYS MARKET DETECTION & TREND VALIDATION + NOISE FILTERING
 - REVERSAL ALERT: If >2 consecutive opposite candles with confirmation → Flag for bias adjustment
 - RULE: SIDEWAYS covers both consolidation patterns and mixed/uncertain signals, noise filtering prevents false signals
 
+📊 TERMINOLOGY DEFINITIONS:
+- Volatility Ratio: Current ATR / Average ATR (last 24h) - measures relative volatility
+- Mixed Signals >50%: When more than half of high-priority signals conflict
+- Adaptive Thresholds: Signal strength requirements that adjust to market volatility
+- Noise Filtering: Ignoring small price movements that don't confirm larger trends
 
 STEP 1: Economic Event Override Check + Bond Market Check
 - If Economic Calendar shows "AVOID_TRADING" OR high-impact event in next 24h → FORCE FLAT POSITION
@@ -254,11 +310,20 @@ STEP 4: Technical Analysis WITH Historical Validation + Multi-timeframe Filter
 STEP 5: Macro Trend Alignment Check
 - Fear & Greed, BTC dominance, S&P 500/VIX for overall market bias
 - Multi-source sentiment for crowd positioning
+- Social metrics analysis: Forum activity, GitHub stars, developer sentiment
 - RULE: Use for position sizing confidence, not trade direction
+
+STEP 5.5: SOCIAL METRICS & DEVELOPER ACTIVITY ANALYSIS
+- Forum activity spikes: >20% increase in posts = potential sentiment shift
+- GitHub activity: BTC/ETH star changes indicate developer interest
+- Developer sentiment: High activity = positive long-term outlook
+- Social momentum: Trending topics and community engagement
+- RULE: Social metrics are confirmation signals, not primary drivers
 
 STEP 6: Sentiment Risk Assessment
 - Check funding rates and long/short ratios for overcrowded trades
 - High funding = crowded positioning = reversal risk
+- Social sentiment extremes = potential reversal signals
 - RULE: Avoid trading in same direction as extreme crowd positioning
 
 STEP 7: Enhanced Execution Planning + Conditional Breakout Setup
@@ -366,6 +431,9 @@ REQUIRED OUTPUT FORMAT (CONCISE ONLY):
 - Correlation Risk: [BTC-ETH positioning notes]
 - Volatility Regime: [regime] detected - position sizing adjusted accordingly
 - Macro Risk: [traditional market alignment]
+- Data Quality: [Limited analysis warnings if applicable]
+- Social Sentiment: [Forum/GitHub activity insights]
+- Win Probability: [Confidence-based win rate estimate]
 
 [IF SIDEWAYS DETECTED, REPLACE EXECUTION PLANS WITH:]
 <b>━━━ ⏸️ MARKET STATUS: SIDEWAYS ━━━</b>
@@ -373,6 +441,7 @@ REQUIRED OUTPUT FORMAT (CONCISE ONLY):
 - Key Levels: Support $[X], Resistance $[Y]
 - Breakout Watch: Volume >1.5x average near levels
 - Confidence: [XX]% (sideways uncertainty)
+- Correlation Status: [BTC-ETH correlation during sideways]
 
 [IF BREAKOUT POTENTIAL DETECTED, ADD ADDITIONAL PLAN:]
 <b>━━━ 🎯 CONDITIONAL BREAKOUT SETUP ━━━</b>
@@ -383,6 +452,17 @@ REQUIRED OUTPUT FORMAT (CONCISE ONLY):
 🎯 <b>TP: $[target] (2% move or next liquidation cluster)</b>
 ⚖️ Risk/Reward: [X:X]
 📊 Confidence: [XX]% (breakout uncertainty)
+
+<b>━━━ 🚀 BREAKOUT WATCH ━━━</b>
+- Breakout Type: [Support/Resistance] breakout potential
+- Trigger Level: $[X] with volume >1.5x average
+- Entry: On breakout confirmation (1% move beyond level)
+- SL: [X]% below/above breakout level
+- TP: [X]% move in breakout direction
+- Confidence: [XX]% (breakout uncertainty reduces confidence)
+
+⚠️ FINAL REMINDER: Keep total output under 600 words. Be concise, actionable, and precise.
+Focus on the most critical information: Executive Summary, Execution Plans, and Risk Notes.
 
 STOP HERE. Keep under 600 words total. Be precise and actionable."""
         
@@ -488,6 +568,30 @@ STOP HERE. Keep under 600 words total. Be precise and actionable."""
             if breakdown.get('large_trades'): count += 1
             if breakdown.get('exchange_flows'): count += 1
         
+        # 13. Network Health Data (6 points total)
+        # BTC Network Health (4 points)
+        btc_network = market_data.get("btc_network_health", {})
+        if btc_network.get("hash_rate_th_s"): count += 1
+        if btc_network.get("mining_difficulty"): count += 1
+        if btc_network.get("mempool_unconfirmed"): count += 1
+        if btc_network.get("active_addresses_trend"): count += 1
+        
+        # ETH Network Health (2 points)
+        eth_network = market_data.get("eth_network_health", {})
+        if eth_network.get("gas_prices"): count += 1
+        if eth_network.get("total_supply"): count += 1
+        
+        # 14. Crypto Correlations (4 points total)
+        # Crypto Correlations (2 points)
+        crypto_correlations = market_data.get("crypto_correlations", {})
+        if crypto_correlations.get("btc_eth_correlation_30d") is not None: count += 1
+        if crypto_correlations.get("btc_eth_correlation_7d") is not None: count += 1
+        
+        # Cross-Asset Correlations (2 points)
+        cross_asset_correlations = market_data.get("cross_asset_correlations", {})
+        if cross_asset_correlations.get("market_regime"): count += 1
+        if cross_asset_correlations.get("crypto_equity_regime"): count += 1
+        
         return count
 
     # ============================================================================
@@ -532,7 +636,7 @@ STOP HERE. Keep under 600 words total. Be precise and actionable."""
             eth_weekly = historical.get('ETH', {}).get('1wk', {})
             
             if not btc_weekly or not eth_weekly:
-                return "INSUFFICIENT_DATA"
+                return "MISSING_WEEKLY_DATA"
             
             # Safely extract weekly data
             btc_close = btc_weekly.get('close', [])
@@ -540,26 +644,33 @@ STOP HERE. Keep under 600 words total. Be precise and actionable."""
             eth_close = eth_weekly.get('close', [])
             eth_sma200 = eth_weekly.get('sma200', [])
             
-            # Check if we have valid list data
-            if not all([
-                isinstance(btc_close, list) and len(btc_close) > 0,
-                isinstance(btc_sma200, list) and len(btc_sma200) > 0,
-                isinstance(eth_close, list) and len(eth_close) > 0,
-                isinstance(eth_sma200, list) and len(eth_sma200) > 0
-            ]):
-                return "INSUFFICIENT_DATA"
+            # Check if we have valid list data with sufficient length
+            if not isinstance(btc_close, list) or len(btc_close) < 200:
+                return "INSUFFICIENT_BTC_WEEKLY_DATA"
+            if not isinstance(btc_sma200, list) or len(btc_sma200) < 200:
+                return "INSUFFICIENT_BTC_SMA200_DATA"
+            if not isinstance(eth_close, list) or len(eth_close) < 200:
+                return "INSUFFICIENT_ETH_WEEKLY_DATA"
+            if not isinstance(eth_sma200, list) or len(eth_sma200) < 200:
+                return "INSUFFICIENT_ETH_SMA200_DATA"
             
-            # Safely convert to float
+            # Safely convert to float and validate
             try:
                 btc_current = float(btc_close[-1]) if btc_close[-1] is not None else 0
                 btc_sma = float(btc_sma200[-1]) if btc_sma200[-1] is not None else 0
                 eth_current = float(eth_close[-1]) if eth_close[-1] is not None else 0
                 eth_sma = float(eth_sma200[-1]) if eth_sma200[-1] is not None else 0
             except (ValueError, TypeError):
-                return "INVALID_PRICE_DATA"
+                return "INVALID_PRICE_DATA_TYPE"
             
-            if btc_sma == 0 or eth_sma == 0:
-                return "INVALID_SMA_DATA"
+            if btc_current <= 0:
+                return "INVALID_BTC_PRICE_VALUE"
+            if btc_sma <= 0:
+                return "INVALID_BTC_SMA200_VALUE"
+            if eth_current <= 0:
+                return "INVALID_ETH_PRICE_VALUE"
+            if eth_sma <= 0:
+                return "INVALID_ETH_SMA200_VALUE"
             
             btc_trend = "BULL" if btc_current > btc_sma else "BEAR"
             eth_trend = "BULL" if eth_current > eth_sma else "BEAR"
@@ -569,26 +680,32 @@ STOP HERE. Keep under 600 words total. Be precise and actionable."""
             else:
                 return "DIVERGENT"
                 
-        except (IndexError, TypeError, KeyError, AttributeError):
-            return "UNKNOWN"
+        except (IndexError, TypeError, KeyError, AttributeError) as e:
+            return f"DATA_PROCESSING_ERROR: {str(e)[:50]}"
 
     def _find_historical_resistance_levels(self, historical):
         """Find confluence of historical resistance levels"""
         try:
             btc_daily = historical.get('BTC', {}).get('1d', {})
-            if not btc_daily or 'high' not in btc_daily or 'close' not in btc_daily:
-                return "NO_DATA"
+            if not btc_daily:
+                return "MISSING_BTC_DAILY_DATA"
+            if 'high' not in btc_daily or 'close' not in btc_daily:
+                return "MISSING_HIGH_CLOSE_DATA"
             
             # Get data safely
             highs = btc_daily.get('high', [])
             closes = btc_daily.get('close', [])
             
-            # Validate data
-            if not isinstance(highs, list) or not isinstance(closes, list):
-                return "INVALID_DATA_TYPE"
+            # Validate data types and length
+            if not isinstance(highs, list):
+                return "INVALID_HIGH_DATA_TYPE"
+            if not isinstance(closes, list):
+                return "INVALID_CLOSE_DATA_TYPE"
             
-            if len(highs) < 50 or len(closes) < 1:
-                return "INSUFFICIENT_DATA"
+            if len(highs) < 50:
+                return f"INSUFFICIENT_HIGH_DATA: {len(highs)} days (need 50+)"
+            if len(closes) < 1:
+                return "INSUFFICIENT_CLOSE_DATA"
             
             # Get recent highs (last 50 days)
             recent_highs = highs[-50:]
@@ -596,10 +713,10 @@ STOP HERE. Keep under 600 words total. Be precise and actionable."""
             try:
                 current_price = float(closes[-1]) if closes[-1] is not None else 0
             except (ValueError, TypeError):
-                return "INVALID_PRICE"
+                return "INVALID_CURRENT_PRICE_VALUE"
             
             if current_price <= 0:
-                return "INVALID_PRICE"
+                return f"INVALID_CURRENT_PRICE: {current_price}"
             
             # Find resistance levels above current price
             resistance_levels = []
@@ -621,28 +738,34 @@ STOP HERE. Keep under 600 words total. Be precise and actionable."""
             else:
                 return "CLEAR_SKIES"
                 
-        except (IndexError, TypeError, KeyError, AttributeError):
-            return "UNKNOWN"
+        except (IndexError, TypeError, KeyError, AttributeError) as e:
+            return f"RESISTANCE_ANALYSIS_ERROR: {str(e)[:50]}"
 
     def _check_momentum_alignment(self, historical):
-        """Check if momentum aligns across timeframes"""
+        """Check if momentum aligns across timeframes with percentage quantification"""
         try:
             btc_daily = historical.get('BTC', {}).get('1d', {})
             btc_weekly = historical.get('BTC', {}).get('1wk', {})
             
-            if not btc_daily or not btc_weekly:
-                return "INSUFFICIENT_DATA"
+            if not btc_daily:
+                return "MISSING_BTC_DAILY_DATA"
+            if not btc_weekly:
+                return "MISSING_BTC_WEEKLY_DATA"
             
             # Check MACD alignment
             daily_macd = btc_daily.get('macd_histogram', [])
             weekly_macd = btc_weekly.get('macd_histogram', [])
             
             # Validate MACD data
-            if not isinstance(daily_macd, list) or not isinstance(weekly_macd, list):
-                return "INVALID_MACD_TYPE"
+            if not isinstance(daily_macd, list):
+                return "INVALID_DAILY_MACD_TYPE"
+            if not isinstance(weekly_macd, list):
+                return "INVALID_WEEKLY_MACD_TYPE"
             
-            if len(daily_macd) == 0 or len(weekly_macd) == 0:
-                return "NO_MACD_DATA"
+            if len(daily_macd) == 0:
+                return "NO_DAILY_MACD_DATA"
+            if len(weekly_macd) == 0:
+                return "NO_WEEKLY_MACD_DATA"
             
             try:
                 # Safely get last MACD values
@@ -657,10 +780,31 @@ STOP HERE. Keep under 600 words total. Be precise and actionable."""
             if daily_signal == weekly_signal:
                 return f"ALIGNED_{daily_signal}ISH"
             else:
-                return "DIVERGENT_MOMENTUM"
+                # Calculate divergence percentage
+                if daily_value != 0 and weekly_value != 0:
+                    # Calculate relative divergence as percentage of the larger value
+                    max_value = max(abs(daily_value), abs(weekly_value))
+                    divergence_pct = abs(daily_value - weekly_value) / max_value * 100
+                    
+                    if divergence_pct < 25:
+                        return f"SLIGHT_DIVERGENCE_{divergence_pct:.1f}%"
+                    elif divergence_pct < 50:
+                        return f"MODERATE_DIVERGENCE_{divergence_pct:.1f}%"
+                    elif divergence_pct < 75:
+                        return f"STRONG_DIVERGENCE_{divergence_pct:.1f}%"
+                    else:
+                        return f"EXTREME_DIVERGENCE_{divergence_pct:.1f}%"
+                else:
+                    # Handle zero values
+                    if daily_value == 0 and weekly_value == 0:
+                        return "BOTH_MACD_ZERO"
+                    elif daily_value == 0:
+                        return "DAILY_MACD_ZERO"
+                    else:
+                        return "WEEKLY_MACD_ZERO"
                 
-        except (IndexError, TypeError, KeyError, AttributeError):
-            return "UNKNOWN"
+        except (IndexError, TypeError, KeyError, AttributeError) as e:
+            return f"MOMENTUM_ANALYSIS_ERROR: {str(e)[:50]}"
 
     def _assess_treasury_impact(self, t10_yield):
         """Assess treasury yield impact on crypto"""
@@ -856,6 +1000,38 @@ STOP HERE. Keep under 600 words total. Be precise and actionable."""
         try:
             print("[INFO] Generating AI prediction with comprehensive market analysis...")
             
+            # Check if we have critical enhanced data for reliable predictions
+            critical_sources = ['order_book_analysis', 'liquidation_heatmap', 'economic_calendar']
+            missing_critical = [source for source in critical_sources if not market_data.get(source)]
+            
+            if missing_critical:
+                warning_message = f"""🚨 CRITICAL DATA UNAVAILABLE - NO PREDICTION POSSIBLE
+
+Missing critical market structure data:
+• {', '.join(missing_critical)}
+
+Impact: Predictions would be unreliable without this data
+Action Required: Configure missing API keys or check API status
+
+System Status: PREDICTION BLOCKED for data quality"""
+                
+                print(f"[WARN] {warning_message}")
+                
+                # Send warning to Telegram
+                try:
+                    from telegram_utils import send_telegram_message
+                    send_telegram_message(warning_message)
+                    print("[INFO] ✅ Warning sent to Telegram")
+                except Exception as e:
+                    print(f"[ERROR] Failed to send Telegram warning: {e}")
+                
+                return {
+                    'prediction': None,
+                    'status': 'BLOCKED',
+                    'reason': f"Missing critical data: {', '.join(missing_critical)}",
+                    'warning_sent': True
+                }
+            
             # Create comprehensive prompt
             prompt = self.create_comprehensive_prompt(market_data)
             
@@ -895,10 +1071,25 @@ DO NOT include price targets, entry points, stop losses, or trading recommendati
             model_used = None
             provider_used = None
             
+            print(f"[DEBUG] 🔍 AI Provider Debugging:")
+            print(f"[DEBUG] Primary provider: {self.primary_provider}")
+            print(f"[DEBUG] Fallback provider: {self.fallback_provider}")
+            print(f"[DEBUG] xAI client available: {self.xai_client is not None}")
+            print(f"[DEBUG] OpenAI client available: {self.openai_client is not None}")
+            print(f"[DEBUG] xAI key configured: {'Yes' if self.xai_key and self.xai_key != 'YOUR_XAI_API_KEY' else 'No'}")
+            print(f"[DEBUG] OpenAI key configured: {'Yes' if self.openai_key and self.openai_key != 'YOUR_OPENAI_API_KEY' else 'No'}")
+            
             # Try primary provider
+            print(f"[DEBUG] 🔍 Checking primary provider: {self.primary_provider}")
+            print(f"[DEBUG] 🔍 Primary provider == 'xai': {self.primary_provider == 'xai'}")
+            print(f"[DEBUG] 🔍 xAI client exists: {self.xai_client is not None}")
+            print(f"[DEBUG] 🔍 Will try xAI: {self.primary_provider == 'xai' and self.xai_client is not None}")
+            
             if self.primary_provider == "xai" and self.xai_client:
                 try:
                     print(f"[INFO] 🚀 Using xAI Grok (primary provider)")
+                    print(f"[DEBUG] xAI API Key configured: {'Yes' if self.xai_key and self.xai_key != 'YOUR_XAI_API_KEY' else 'No'}")
+                    print(f"[DEBUG] xAI Client status: {self.xai_client}")
                     
                     # Direct HTTP request to xAI API
                     url = "https://api.x.ai/v1/chat/completions"
@@ -915,9 +1106,24 @@ DO NOT include price targets, entry points, stop losses, or trading recommendati
                     }
                     
                     print(f"[INFO] Sending request to xAI API (timeout: 120s)...")
+                    print(f"[DEBUG] Request URL: {url}")
+                    print(f"[DEBUG] Request headers: {dict(headers)}")
+                    print(f"[DEBUG] Request payload keys: {list(payload.keys())}")
+                    print(f"[DEBUG] Messages count: {len(messages)}")
+                    print(f"[DEBUG] Prompt length: {len(prompt)} characters")
+                    
                     response = requests.post(url, headers=headers, json=payload, timeout=120)
+                    print(f"[DEBUG] Response status: {response.status_code}")
+                    print(f"[DEBUG] Response headers: {dict(response.headers)}")
+                    
                     response.raise_for_status()
                     result = response.json()
+                    
+                    print(f"[DEBUG] Response result keys: {list(result.keys())}")
+                    if 'choices' in result:
+                        print(f"[DEBUG] Choices count: {len(result['choices'])}")
+                        if result['choices']:
+                            print(f"[DEBUG] First choice keys: {list(result['choices'][0].keys())}")
                     
                     ai_prediction = result["choices"][0]["message"]["content"]
                     finish_reason = result["choices"][0].get("finish_reason", "unknown")
@@ -932,28 +1138,129 @@ DO NOT include price targets, entry points, stop losses, or trading recommendati
                         print("[INFO] ✅ Response completed normally")
                 except Exception as e:
                     print(f"[WARN] xAI Grok failed: {e}")
+                    print(f"[DEBUG] Exception type: {type(e).__name__}")
+                    print(f"[DEBUG] Exception details: {str(e)}")
+                    if hasattr(e, 'response'):
+                        print(f"[DEBUG] Response status: {e.response.status_code if e.response else 'N/A'}")
+                        print(f"[DEBUG] Response text: {e.response.text[:500] if e.response else 'N/A'}")
                     ai_prediction = None
             
-            # Try fallback provider if primary failed
-            if ai_prediction is None and self.fallback_provider == "openai" and self.openai_client:
+            # Try OpenAI if it's the primary provider
+            if self.primary_provider == "openai" and self.openai_client:
                 try:
-                    print(f"[INFO] 🔄 Using OpenAI (fallback provider)")
+                    print(f"[INFO] 🚀 Using OpenAI (primary provider)")
+                    print(f"[DEBUG] OpenAI API Key configured: {'Yes' if self.openai_key and self.openai_key != 'YOUR_OPENAI_API_KEY' else 'No'}")
+                    print(f"[DEBUG] OpenAI Client initialized: {'Yes' if self.openai_client else 'No'}")
+                    print(f"[DEBUG] OpenAI Client type: {type(self.openai_client)}")
+                    print(f"[DEBUG] OpenAI Key length: {len(self.openai_key) if self.openai_key else 0}")
+                    print(f"[DEBUG] Messages count: {len(messages)}")
+                    print(f"[DEBUG] Prompt length: {len(prompt)} characters")
+                    
                     response = self.openai_client.chat.completions.create(
-                        model="gpt-4o",
+                        model="gpt-4",  # Use standard GPT-4 instead of gpt-4o
                         messages=messages,
                         max_tokens=3000 if reasoning_mode else 1500,
                         temperature=0.7
                     )
+                    
+                    print(f"[DEBUG] OpenAI response received")
+                    print(f"[DEBUG] Response choices count: {len(response.choices)}")
+                    if response.choices:
+                        print(f"[DEBUG] First choice message keys: {list(response.choices[0].message.__dict__.keys())}")
+                    
                     ai_prediction = response.choices[0].message.content
-                    model_used = "gpt-4o"
+                    model_used = "gpt-4"
+                    provider_used = "openai"
+                    print("[INFO] ✅ OpenAI prediction generated successfully")
+                except Exception as e:
+                    print(f"[WARN] OpenAI primary failed: {e}")
+                    print(f"[DEBUG] Exception type: {type(e).__name__}")
+                    print(f"[DEBUG] Exception details: {str(e)}")
+                    ai_prediction = None
+            
+            # Try fallback provider if primary failed
+            print(f"[DEBUG] 🔍 Checking fallback provider: {self.fallback_provider}")
+            print(f"[DEBUG] 🔍 Fallback provider == 'openai': {self.fallback_provider == 'openai'}")
+            print(f"[DEBUG] 🔍 OpenAI client exists: {self.openai_client is not None}")
+            print(f"[DEBUG] 🔍 Will try OpenAI: {self.fallback_provider == 'openai' and self.openai_client is not None}")
+            
+            if ai_prediction is None and self.fallback_provider == "openai" and self.openai_client:
+                try:
+                    print(f"[INFO] 🔄 Using OpenAI (fallback provider)")
+                    print(f"[DEBUG] OpenAI API Key configured: {'Yes' if self.openai_key and self.openai_key != 'YOUR_OPENAI_API_KEY' else 'No'}")
+                    print(f"[DEBUG] OpenAI Client initialized: {'Yes' if self.openai_client else 'No'}")
+                    print(f"[DEBUG] OpenAI Client type: {type(self.openai_client)}")
+                    print(f"[DEBUG] OpenAI Key length: {len(self.openai_key) if self.openai_key else 0}")
+                    print(f"[DEBUG] Messages count: {len(messages)}")
+                    print(f"[DEBUG] Prompt length: {len(prompt)} characters")
+                    
+                    response = self.openai_client.chat.completions.create(
+                        model="gpt-4",  # Use standard GPT-4 instead of gpt-4o
+                        messages=messages,
+                        max_tokens=3000 if reasoning_mode else 1500,
+                        temperature=0.7
+                    )
+                    
+                    print(f"[DEBUG] OpenAI response received")
+                    print(f"[DEBUG] Response choices count: {len(response.choices)}")
+                    if response.choices:
+                        print(f"[DEBUG] First choice message keys: {list(response.choices[0].message.__dict__.keys())}")
+                    
+                    ai_prediction = response.choices[0].message.content
+                    model_used = "gpt-4"
                     provider_used = "openai"
                     print("[INFO] ✅ OpenAI prediction generated successfully")
                 except Exception as e:
                     print(f"[WARN] OpenAI fallback failed: {e}")
+                    print(f"[DEBUG] OpenAI client type: {type(self.openai_client)}")
+                    print(f"[DEBUG] OpenAI key length: {len(self.openai_key) if self.openai_key else 0}")
+                    ai_prediction = None
+            
+            # Try xAI as fallback if OpenAI was primary
+            if ai_prediction is None and self.fallback_provider == "xai" and self.xai_client:
+                try:
+                    print(f"[INFO] 🔄 Using xAI Grok (fallback provider)")
+                    print(f"[DEBUG] xAI API Key configured: {'Yes' if self.xai_key and self.xai_key != 'YOUR_XAI_API_KEY' else 'No'}")
+                    print(f"[DEBUG] xAI Client status: {self.xai_client}")
+                    
+                    # Direct HTTP request to xAI API
+                    url = "https://api.x.ai/v1/chat/completions"
+                    headers = {
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {self.xai_key}"
+                    }
+                    
+                    payload = {
+                        "model": "grok-4",
+                        "messages": messages,
+                        "max_tokens": 8000 if reasoning_mode else 4000,
+                        "temperature": 0.7
+                    }
+                    
+                    print(f"[INFO] Sending request to xAI API (timeout: 120s)...")
+                    response = requests.post(url, headers=headers, json=payload, timeout=120)
+                    response.raise_for_status()
+                    result = response.json()
+                    
+                    ai_prediction = result["choices"][0]["message"]["content"]
+                    model_used = "grok-4"
+                    provider_used = "xai"
+                    print(f"[INFO] ✅ xAI Grok prediction generated successfully")
+                except Exception as e:
+                    print(f"[WARN] xAI fallback failed: {e}")
                     ai_prediction = None
             
             # If both providers failed
             if ai_prediction is None:
+                print(f"[DEBUG] 🚨 AI Prediction Failed Analysis:")
+                print(f"[DEBUG] Primary provider: {self.primary_provider}")
+                print(f"[DEBUG] Fallback provider: {self.fallback_provider}")
+                print(f"[DEBUG] xAI client: {self.xai_client}")
+                print(f"[DEBUG] OpenAI client: {self.openai_client}")
+                print(f"[DEBUG] xAI key: {'Configured' if self.xai_key and self.xai_key != 'YOUR_XAI_API_KEY' else 'Missing/Placeholder'}")
+                print(f"[DEBUG] OpenAI key: {'Configured' if self.openai_key and self.openai_key != 'YOUR_OPENAI_API_KEY' else 'Missing/Placeholder'}")
+                print(f"[DEBUG] Will try xAI: {self.primary_provider == 'xai' and self.xai_client is not None}")
+                print(f"[DEBUG] Will try OpenAI: {self.fallback_provider == 'openai' and self.openai_client is not None}")
                 raise Exception("All AI providers failed")
             
             return {
@@ -1201,6 +1508,11 @@ DO NOT include price targets, entry points, stop losses, or trading recommendati
             if "error" in ai_result:
                 print(f"[CRITICAL] AI prediction failed: {ai_result['error']}")
                 return None
+            
+            # Final validation: Check if prediction was blocked due to data quality
+            if ai_result.get('status') == 'BLOCKED':
+                print(f"[WARN] AI prediction blocked: {ai_result.get('reason', 'Unknown reason')}")
+                return ai_result
             
             # Prepare prediction data (no saving)
             if save_results:

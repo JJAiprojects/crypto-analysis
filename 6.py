@@ -66,7 +66,7 @@ def load_config():
             "include_social_metrics": True,
             "include_enhanced_data": True
         },
-        "minimum_data_points": 46  # Updated from 45 to 46 (minimum required data points for enhanced data)
+        "minimum_data_points": 56  # Updated to include correlations (52 + 4 new points)
     }
     
     # Load existing config.json if available (for additional settings)
@@ -99,8 +99,27 @@ def load_config():
     
     return config
 
+def configure_ai_provider_for_mode(config, test_mode):
+    """Configure AI provider based on test mode"""
+    if test_mode:
+        # Test mode: Use OpenAI (cheaper, more reliable for local testing)
+        config["ai_provider"]["primary"] = "openai"
+        config["ai_provider"]["fallback"] = "xai"
+        config["ai_provider"]["enabled"]["openai"] = True
+        config["ai_provider"]["enabled"]["xai"] = False
+        print(f"🧪 AI Provider: OpenAI (test mode - cheaper and more reliable)")
+    else:
+        # Production mode: Use xAI (as intended)
+        config["ai_provider"]["primary"] = "xai"
+        config["ai_provider"]["fallback"] = "openai"
+        config["ai_provider"]["enabled"]["xai"] = True
+        config["ai_provider"]["enabled"]["openai"] = False
+        print(f"🚀 AI Provider: xAI (production mode)")
+    
+    return config
+
 def count_data_points(data):
-    """Count the number of valid data points collected - ACCURATE COUNT (matches data_collector.py)"""
+    """Count the number of valid data points collected - ACCURATE COUNT (matches data_collector.py) - Updated to 53 points"""
     count = 0
     
     # 1. Crypto Prices (2 points)
@@ -176,11 +195,52 @@ def count_data_points(data):
     if data.get("volatility_regime"): count += 1
     
     # 12. NEW ENHANCED DATA SOURCES (9 points)
-    if data.get("order_book_analysis"): count += 1
-    if data.get("liquidation_heatmap"): count += 1
+    # Order Book Analysis (2 points: BTC + ETH)
+    order_book = data.get("order_book_analysis", {})
+    if order_book.get("BTC"): count += 1
+    if order_book.get("ETH"): count += 1
+    
+    # Liquidation Heatmap (2 points: BTC + ETH)
+    liquidation = data.get("liquidation_heatmap", {})
+    if liquidation.get("BTC"): count += 1
+    if liquidation.get("ETH"): count += 1
+    
+    # Economic Calendar (1 point: market-wide)
     if data.get("economic_calendar"): count += 1
+    
+    # Multi-Source Sentiment (1 point: market-wide)
     if data.get("multi_source_sentiment"): count += 1
-    if data.get("whale_movements"): count += 1
+    
+    # Whale Movements (2 points: BTC + ETH)
+    whale_data = data.get("whale_movements", {})
+    if whale_data and whale_data.get('breakdown'):
+        breakdown = whale_data.get('breakdown', {})
+        if breakdown.get('large_trades'): count += 1
+        if breakdown.get('exchange_flows'): count += 1
+    
+    # 13. Network Health Data (6 points total)
+    # BTC Network Health (4 points)
+    btc_network = data.get("btc_network_health", {})
+    if btc_network.get("hash_rate_th_s"): count += 1
+    if btc_network.get("mining_difficulty"): count += 1
+    if btc_network.get("mempool_unconfirmed"): count += 1
+    if btc_network.get("active_addresses_trend"): count += 1
+    
+    # ETH Network Health (2 points)
+    eth_network = data.get("eth_network_health", {})
+    if eth_network.get("gas_prices"): count += 1
+    if eth_network.get("total_supply"): count += 1
+    
+    # 14. Crypto Correlations (4 points total)
+    # Crypto Correlations (2 points)
+    crypto_correlations = data.get("crypto_correlations", {})
+    if crypto_correlations.get("btc_eth_correlation_30d") is not None: count += 1
+    if crypto_correlations.get("btc_eth_correlation_7d") is not None: count += 1
+    
+    # Cross-Asset Correlations (2 points)
+    cross_asset_correlations = data.get("cross_asset_correlations", {})
+    if cross_asset_correlations.get("market_regime"): count += 1
+    if cross_asset_correlations.get("crypto_equity_regime"): count += 1
     
     return count
 
@@ -216,16 +276,22 @@ async def run_ai_prediction_system(test_mode=False, reasoning_mode=False, analys
         print("🧠 CRYPTO AI PREDICTION SYSTEM - REASONING MODE")
         print("🧪 Using TEST Telegram bot and chat (safety)")
         print("💭 AI thought process will be shown")
+        print("🤖 AI Provider: OpenAI (test mode - cheaper and more reliable)")
     elif test_mode:
         print("🧪 CRYPTO AI PREDICTION SYSTEM TESTING - TEST MODE")
         print("⚠️  Using TEST Telegram bot and chat")
+        print("🤖 AI Provider: OpenAI (test mode - cheaper and more reliable)")
     else:
         print("🚀 CRYPTO AI PREDICTION SYSTEM STARTING - PRODUCTION MODE")
+        print("🤖 AI Provider: xAI (production mode)")
     print("=" * 80)
     
     try:
         # Load configuration
         config = load_config()
+        
+        # Configure AI provider based on test mode
+        config = configure_ai_provider_for_mode(config, test_mode)
         
         if test_mode:
             print("🧪 Running in AI TEST MODE")
@@ -238,12 +304,24 @@ async def run_ai_prediction_system(test_mode=False, reasoning_mode=False, analys
             if not test_config.get("chat_id"):
                 print("⚠️ [WARNING] Test Telegram chat ID not configured!")
                 print("   Set TEST_TELEGRAM_CHAT_ID environment variable")
+            
+            # Validate OpenAI API key for test mode
+            if not config["api_keys"]["openai"] or config["api_keys"]["openai"] == "YOUR_OPENAI_API_KEY":
+                print("⚠️ [WARNING] OpenAI API key not configured for test mode!")
+                print("   Set OPENAI_API_KEY environment variable")
+                print("   Test mode requires OpenAI for cheaper and more reliable testing")
         else:
             # Validate production configuration
             if not config["telegram"].get("bot_token"):
                 print("⚠️ [WARNING] Production Telegram bot token not configured!")
             if not config["telegram"].get("chat_id"):
                 print("⚠️ [WARNING] Production Telegram chat ID not configured!")
+            
+            # Validate xAI API key for production mode
+            if not config["api_keys"]["xai"] or config["api_keys"]["xai"] == "YOUR_XAI_API_KEY":
+                print("⚠️ [WARNING] xAI API key not configured for production mode!")
+                print("   Set XAI_API_KEY environment variable")
+                print("   Production mode requires xAI for enhanced analysis")
         
         # Initialize components
         print("\n📊 Initializing Data Collector...")
@@ -252,9 +330,9 @@ async def run_ai_prediction_system(test_mode=False, reasoning_mode=False, analys
         print("🤖 Initializing AI Predictor...")
         ai_predictor = AIPredictor(config)
         
-        # STEP 1: Data Collection (54 data points) - Updated from 52
+        # STEP 1: Data Collection (53 data points) - Updated to include correlations
         print("\n" + "=" * 60)
-        print("📈 STEP 1: COLLECTING 54 DATA POINTS")  # Updated from 52
+        print("📈 STEP 1: COLLECTING 53 DATA POINTS")  # Updated to include correlations
         print("=" * 60)
         
         print("Gathering comprehensive market data...")
