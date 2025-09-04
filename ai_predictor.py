@@ -75,6 +75,15 @@ class AIPredictor:
         volatility_regime = market_data.get("volatility_regime", {})
         m2_data = market_data.get("m2_supply", {})
         
+        # Network health and correlation data
+        btc_network = market_data.get("btc_network_health", {})
+        eth_network = market_data.get("eth_network_health", {})
+        crypto_correlations = market_data.get("crypto_correlations", {})
+        cross_asset_correlations = market_data.get("cross_asset_correlations", {})
+        cftc_data = market_data.get("cftc_positioning", {})
+        
+
+        
         # Macroeconomic data
         inflation_data = market_data.get("inflation", {})
         rates_data = market_data.get("interest_rates", {})
@@ -87,11 +96,66 @@ class AIPredictor:
         market_cap_data = market_data.get("market_cap", (0, 0))
         volumes = market_data.get("volumes", {})
         
+        # Debug: Check volumes data structure
+        print(f"[DEBUG] Volumes data structure: {type(volumes)}")
+        print(f"[DEBUG] Volumes content: {volumes}")
+        if isinstance(volumes, dict):
+            print(f"[DEBUG] BTC volume type: {type(volumes.get('btc_volume'))}")
+            print(f"[DEBUG] BTC volume value: {volumes.get('btc_volume')}")
+            print(f"[DEBUG] ETH volume type: {type(volumes.get('eth_volume'))}")
+            print(f"[DEBUG] ETH volume value: {volumes.get('eth_volume')}")
+        
         # BTC and ETH specific data
         btc_data = technicals.get("BTC", {})
         eth_data = technicals.get("ETH", {})
         btc_futures = futures.get("BTC", {})
         eth_futures = futures.get("ETH", {})
+        
+        # Safety check: Ensure price data is numeric
+        if btc_data and isinstance(btc_data.get('price'), dict):
+            print(f"[WARN] BTC price data is dict, not numeric: {type(btc_data.get('price'))}")
+            print(f"[DEBUG] BTC price data content: {btc_data.get('price')}")
+        if eth_data and isinstance(eth_data.get('price'), dict):
+            print(f"[WARN] ETH price data is dict, not numeric: {type(eth_data.get('price'))}")
+            print(f"[DEBUG] ETH price data content: {eth_data.get('price')}")
+        
+        # Debug: Print data types for troubleshooting
+        if btc_data:
+            print(f"[DEBUG] BTC data types - price: {type(btc_data.get('price'))}, atr: {type(btc_data.get('atr'))}")
+        if eth_data:
+            print(f"[DEBUG] ETH data types - price: {type(eth_data.get('price'))}, atr: {type(eth_data.get('atr'))}")
+        
+        # Pre-calculate ATR percentages to avoid division errors in f-strings
+        btc_atr_percentage = "N/A"
+        eth_atr_percentage = "N/A"
+        
+        try:
+            if btc_data and btc_data.get('atr') and btc_data.get('price'):
+                btc_atr = self._safe_get_numeric(btc_data, 'atr', 0)
+                btc_price = self._safe_get_numeric(btc_data, 'price', 1)
+                # Double-check that we got numeric values
+                if isinstance(btc_atr, (int, float)) and isinstance(btc_price, (int, float)) and btc_price > 0:
+                    btc_atr_percentage = f"{(btc_atr / btc_price) * 100:.1f}"
+                else:
+                    print(f"[WARN] BTC price or ATR not numeric: atr={type(btc_atr)}, price={type(btc_price)}")
+                    btc_atr_percentage = "N/A"
+        except Exception as e:
+            print(f"[WARN] BTC ATR percentage calculation failed: {e}")
+            btc_atr_percentage = "N/A"
+            
+        try:
+            if eth_data and eth_data.get('atr') and eth_data.get('price'):
+                eth_atr = self._safe_get_numeric(eth_data, 'atr', 0)
+                eth_price = self._safe_get_numeric(eth_data, 'price', 1)
+                # Double-check that we got numeric values
+                if isinstance(eth_atr, (int, float)) and isinstance(eth_price, (int, float)) and eth_price > 0:
+                    eth_atr_percentage = f"{(eth_atr / eth_price) * 100:.1f}"
+                else:
+                    print(f"[WARN] ETH price or ATR not numeric: atr={type(eth_atr)}, price={type(eth_price)}")
+                    eth_atr_percentage = "N/A"
+        except Exception as e:
+            print(f"[WARN] ETH ATR percentage calculation failed: {e}")
+            eth_atr_percentage = "N/A"
         
         # Count actual data points being used
         data_points_used = self._count_available_data(market_data)
@@ -110,6 +174,19 @@ class AIPredictor:
             if not market_data.get(source):
                 data_quality_warnings.append(f"⚠️ {source.replace('_', ' ').title()} data unavailable")
         
+        # Check for CFTC data availability
+        if not cftc_data:
+            data_quality_warnings.append(f"⚠️ CFTC Positioning data unavailable")
+        
+        # Check for network health data availability
+        if not btc_network:
+            data_quality_warnings.append(f"⚠️ BTC Network Health data unavailable")
+        if not eth_network:
+            data_quality_warnings.append(f"⚠️ ETH Network Health data unavailable")
+        
+        # Create comprehensive data completeness tracker
+        data_completeness_tracker = self._create_data_completeness_tracker(market_data)
+        
         data_quality_header = ""
         if data_quality_warnings:
             data_quality_header = f"""
@@ -121,117 +198,163 @@ class AIPredictor:
    - Order book analysis unavailable: Cannot assess smart money flow
    - Liquidation heatmap unavailable: Cannot identify price targets
    - Economic calendar unavailable: Cannot assess market timing risks
-   - Correlation data unavailable: Cannot assess BTC-ETH relationship
+   - CFTC positioning unavailable: Cannot assess institutional sentiment
+   - Network health unavailable: Cannot assess fundamental network strength
+   - Correlation data unavailable: Cannot assess BTC-ETH relationship and cross-asset dynamics
 
 ⚠️ RECOMMENDATION: If these warnings appear, DO NOT make trading predictions.
    Instead, explain why predictions would be unreliable and what data is needed.
 """
         
+        # Add data completeness tracker to header
+        data_quality_header += f"""
+
+📊 DATA COMPLETENESS TRACKER ({data_points_used}/65 points):
+{data_completeness_tracker}
+
+⚠️ DATA COMPLETENESS RULES:
+- ✅ Available: Data point successfully collected and usable
+- ❌ Missing: Data point failed to collect or unavailable
+- <50 points: INSUFFICIENT_DATA - Recommend FLAT POSITION
+- 50-59 points: LIMITED_ANALYSIS - Reduce confidence by 10-15%
+- 60+ points: SUFFICIENT_DATA - Normal analysis possible
+
+🚨 DATA COMPLETENESS ALERT:
+"""
+        
+        # Add specific alerts based on data completeness
+        if data_points_used < 50:
+            data_quality_header += f"""
+🚨 INSUFFICIENT_DATA - FLAT POSITION RECOMMENDED
+   - Only {data_points_used}/65 data points available
+   - Missing critical market structure data
+   - Cannot provide reliable trading analysis
+   - RECOMMENDATION: FLAT POSITION - Wait for better data
+"""
+        elif data_points_used < 60:
+            data_quality_header += f"""
+⚠️ LIMITED_ANALYSIS - REDUCE CONFIDENCE
+   - Only {data_points_used}/65 data points available
+   - Some critical data missing
+   - Reduce confidence by 10-15%
+   - RECOMMENDATION: Conservative position sizing
+"""
+        else:
+            data_quality_header += f"""
+✅ SUFFICIENT_DATA - NORMAL ANALYSIS
+   - {data_points_used}/65 data points available
+   - Sufficient data for reliable analysis
+   - Normal confidence levels appropriate
+"""
+        
         prompt = f"""You are a professional crypto trader with 15+ years experience.{data_quality_header}
 
-⚠️ CRITICAL INSTRUCTION: You MUST follow the 8-STEP ENHANCED DECISION FRAMEWORK internally to analyze the data. This framework is MANDATORY and cannot be ignored. Only provide the final CONCISE trading outlook based on this framework.
+⚠️ CRITICAL: Follow the 8-STEP ENHANCED DECISION FRAMEWORK internally. Output only the final CONCISE trading outlook.
 
-MARKET DATA HIERARCHY ({data_points_used}/57 indicators):
+🚨 DATA COMPLETENESS RULE: If data completeness <50% (<32/65 points), output "INSUFFICIENT_DATA - FLAT POSITION" and skip analysis.
+
+MARKET DATA HIERARCHY ({data_points_used}/65 indicators):
 =========================================================
 
 🔥 SUPER HIGH PRIORITY (Absolute Override - Can Force Flat Position):
-• Economic Calendar: {economic_cal.get('recommendation', 'N/A') if economic_cal else 'API_KEY_MISSING'} | High Impact Events: {economic_cal.get('high_impact', 0) if economic_cal else 0} | Next: {economic_cal.get('next_high_impact', {}).get('title', 'None')[:30] if economic_cal and economic_cal.get('next_high_impact') else 'None'}
-• Volatility Regime: {volatility_regime.get('current_regime', 'N/A')} | Position Size Multiplier: {volatility_regime.get('size_multiplier', 1.0):.1f}x | Risk State: {volatility_regime.get('risk_state', 'N/A')}
+• Economic Calendar: {economic_cal.get('recommendation', 'N/A') if economic_cal else 'API_KEY_MISSING'} | High Impact: {economic_cal.get('high_impact', 0) if economic_cal else 0} | Next: {economic_cal.get('next_high_impact', {}).get('title', 'None')[:30] if economic_cal and economic_cal.get('next_high_impact') else 'None'}
+• Volatility Regime: {volatility_regime.get('current_regime', 'N/A')} | Size Multiplier: {volatility_regime.get('size_multiplier', 1.0):.1f}x | Risk: {volatility_regime.get('risk_state', 'N/A')}
+• CFTC Positioning: {cftc_data.get('institutional_sentiment', 'N/A')} | Commercial: {cftc_data.get('commercial_signal', 'N/A')} | Contrarian: {cftc_data.get('contrarian_signal', 'N/A')} | Smart Money: {f"{cftc_data.get('smart_money_net', 0):+,.0f}" if cftc_data.get('smart_money_net') is not None else 'N/A'}
 
 🚨 HIGH PRIORITY (Override Traditional S/R & Price Targets):
-• Liquidation BTC: {liquidation_map.get('BTC', {}).get('liquidation_pressure', 'N/A') if liquidation_map else 'API_KEY_MISSING'} | Funding: {f"{liquidation_map.get('BTC', {}).get('funding_rate', 0):.3f}" if liquidation_map and liquidation_map.get('BTC') and liquidation_map.get('BTC', {}).get('funding_rate') is not None else 'N/A'}% | Long/Short zones: {len(liquidation_map.get('BTC', {}).get('nearby_long_liquidations', []))} / {len(liquidation_map.get('BTC', {}).get('nearby_short_liquidations', []))}
-• Liquidation ETH: {liquidation_map.get('ETH', {}).get('liquidation_pressure', 'N/A') if liquidation_map else 'API_KEY_MISSING'} | Funding: {f"{liquidation_map.get('ETH', {}).get('funding_rate', 0):.3f}" if liquidation_map and liquidation_map.get('ETH') and liquidation_map.get('ETH', {}).get('funding_rate') is not None else 'N/A'}% | Long/Short zones: {len(liquidation_map.get('ETH', {}).get('nearby_long_liquidations', []))} / {len(liquidation_map.get('ETH', {}).get('nearby_short_liquidations', []))}
-• Bond Market Signal: 10Y Treasury: {f"{rates_data.get('t10_yield'):.2f}" if rates_data.get('t10_yield') is not None else 'N/A'}% | Risk-Off Threshold: {'BREACHED' if rates_data.get('t10_yield') is not None and rates_data.get('t10_yield') > 4.5 else 'NORMAL'} | Crypto Impact: {self._assess_treasury_impact(rates_data.get('t10_yield'))}
+• Liquidation BTC: {liquidation_map.get('BTC', {}).get('liquidation_pressure', 'N/A') if liquidation_map else 'API_KEY_MISSING'} | Funding: {f"{liquidation_map.get('BTC', {}).get('funding_rate', 0):.3f}" if liquidation_map and liquidation_map.get('BTC') and liquidation_map.get('BTC', {}).get('funding_rate') is not None else 'N/A'}% | Zones: {len(liquidation_map.get('BTC', {}).get('nearby_long_liquidations', []))} / {len(liquidation_map.get('BTC', {}).get('nearby_short_liquidations', []))}
+• Liquidation ETH: {liquidation_map.get('ETH', {}).get('liquidation_pressure', 'N/A') if liquidation_map else 'API_KEY_MISSING'} | Funding: {f"{liquidation_map.get('ETH', {}).get('funding_rate', 0):.3f}" if liquidation_map and liquidation_map.get('ETH') and liquidation_map.get('ETH', {}).get('funding_rate') is not None else 'N/A'}% | Zones: {len(liquidation_map.get('ETH', {}).get('nearby_long_liquidations', []))} / {len(liquidation_map.get('ETH', {}).get('nearby_short_liquidations', []))}
+• Bond Market: 10Y Treasury: {f"{rates_data.get('t10_yield'):.2f}" if rates_data.get('t10_yield') is not None else 'N/A'}% | Risk-Off: {'BREACHED' if rates_data.get('t10_yield') is not None and rates_data.get('t10_yield') > 4.5 else 'NORMAL'} | Impact: {self._assess_treasury_impact(rates_data.get('t10_yield'))}
 
 ⚠️ MEDIUM PRIORITY (Entry Timing & Smart Money Flow):
 • Order Book BTC: {order_book.get('BTC', {}).get('book_signal', 'N/A') if order_book else 'API_KEY_MISSING'} | Imbalance: {f"{order_book.get('BTC', {}).get('imbalance_ratio', 0)*100:.1f}" if order_book and order_book.get('BTC') and order_book.get('BTC', {}).get('imbalance_ratio') is not None else 'N/A'}% | MM: {f"{order_book.get('BTC', {}).get('mm_dominance', 0)*100:.1f}" if order_book and order_book.get('BTC') and order_book.get('BTC', {}).get('mm_dominance') is not None else 'N/A'}%
 • Order Book ETH: {order_book.get('ETH', {}).get('book_signal', 'N/A') if order_book else 'API_KEY_MISSING'} | Imbalance: {f"{order_book.get('ETH', {}).get('imbalance_ratio', 0)*100:.1f}" if order_book and order_book.get('ETH') and order_book.get('ETH', {}).get('imbalance_ratio') is not None else 'N/A'}% | MM: {f"{order_book.get('ETH', {}).get('mm_dominance', 0)*100:.1f}" if order_book and order_book.get('ETH') and order_book.get('ETH', {}).get('mm_dominance') is not None else 'N/A'}%
-• Volume Intelligence BTC: 24h: ${f"{volumes.get('btc_volume', 0)/1e9:.1f}" if volumes.get('btc_volume') else 'N/A'}B | Trend: {btc_data.get('volume_trend', 'N/A')} | Volume Signal: {self._analyze_volume_signal('BTC', volumes, btc_data)}
-• Volume Intelligence ETH: 24h: ${f"{volumes.get('eth_volume', 0)/1e9:.1f}" if volumes.get('eth_volume') else 'N/A'}B | Trend: {eth_data.get('volume_trend', 'N/A')} | Volume Signal: {self._analyze_volume_signal('ETH', volumes, eth_data)}
-• Whale Movements: {whale_data.get('whale_signal', 'N/A') if whale_data else 'API_KEY_MISSING'} | Sentiment: {f"{whale_data.get('whale_sentiment', 0):.2f}" if whale_data and whale_data.get('whale_sentiment') is not None else 'N/A'} | Active Signals: {whale_data.get('signals_detected', 0) if whale_data else 0}
-• Smart Money Flow: {whale_data.get('breakdown', {}).get('large_trades', {}).get('activity', 'N/A') if whale_data and whale_data.get('breakdown') and whale_data.get('breakdown', {}).get('large_trades') else 'N/A'} | Exchange Flows: {whale_data.get('breakdown', {}).get('exchange_flows', {}).get('activity', 'N/A') if whale_data and whale_data.get('breakdown') and whale_data.get('breakdown', {}).get('exchange_flows') else 'N/A'}
+• Volume BTC: ${f"{volumes.get('btc_volume', 0)/1e9:.1f}" if volumes.get('btc_volume') else 'N/A'}B | Trend: {btc_data.get('volume_trend', 'N/A')} | Signal: {self._analyze_volume_signal('BTC', volumes, btc_data)}
+• Volume ETH: ${f"{volumes.get('eth_volume', 0)/1e9:.1f}" if volumes.get('eth_volume') else 'N/A'}B | Trend: {eth_data.get('volume_trend', 'N/A')} | Signal: {self._analyze_volume_signal('ETH', volumes, eth_data)}
+• Whale: {whale_data.get('whale_signal', 'N/A') if whale_data else 'API_KEY_MISSING'} | Sentiment: {f"{whale_data.get('whale_sentiment', 0):.2f}" if whale_data and whale_data.get('whale_sentiment') is not None else 'N/A'} | Signals: {whale_data.get('signals_detected', 0) if whale_data else 0}
+• Smart Money: {whale_data.get('breakdown', {}).get('large_trades', {}).get('activity', 'N/A') if whale_data and whale_data.get('breakdown') and whale_data.get('breakdown', {}).get('large_trades') else 'N/A'} | Flows: {whale_data.get('breakdown', {}).get('exchange_flows', {}).get('activity', 'N/A') if whale_data and whale_data.get('breakdown') and whale_data.get('breakdown', {}).get('exchange_flows') else 'N/A'}
+• BTC Network: Hash: {f"{btc_network.get('hash_rate_th_s', 0)/1e12:.1f}" if btc_network and btc_network.get('hash_rate_th_s') else 'N/A'} TH/s | Diff: {f"{btc_network.get('mining_difficulty', 0)/1e12:.1f}" if btc_network and btc_network.get('mining_difficulty') else 'N/A'}T | Mempool: {f"{btc_network.get('mempool_unconfirmed', 0):,}" if btc_network and btc_network.get('mempool_unconfirmed') is not None else 'N/A'} tx | Addr: {f"{btc_network.get('active_addresses_trend', {}).get('total_unique_addresses', 0):,}" if btc_network and btc_network.get('active_addresses_trend') is not None else 'N/A'}
+• ETH Network: Gas: {f"{eth_network.get('gas_prices', {}).get('pressure_ratio', 0):.2f}" if eth_network and eth_network.get('gas_prices', {}).get('pressure_ratio') is not None else 'N/A'}x | Supply: {f"{eth_network.get('total_supply', {}).get('total_eth_supply', 0)/1e6:.1f}" if eth_network and eth_network.get('total_supply') else 'N/A'}M ETH | Block: {f"{eth_network.get('current_block', {}).get('block_height', 0):,}" if eth_network and eth_network.get('current_block', {}).get('block_height') is not None else 'N/A'}
+• Crypto Correlations: BTC-ETH 30d: {f"{crypto_correlations.get('btc_eth_correlation_30d', 0):.3f}" if crypto_correlations and crypto_correlations.get('btc_eth_correlation_30d') is not None else 'N/A'} | Strength: {crypto_correlations.get('correlation_strength', 'N/A')} | Direction: {crypto_correlations.get('correlation_direction', 'N/A')} | Trend: {crypto_correlations.get('correlation_trend', 'N/A')}
+• Cross-Asset Correlations: Market Regime: {cross_asset_correlations.get('market_regime', 'N/A')} | Crypto-Equity: {cross_asset_correlations.get('crypto_equity_regime', 'N/A')} | SP500 Change: {f"{cross_asset_correlations.get('sp500_change_24h', 0):+.2f}" if cross_asset_correlations and cross_asset_correlations.get('sp500_change_24h') is not None else 'N/A'}%
 
 🟢 LOW PRIORITY (Traditional Analysis - Confirmation Only):
 • Fear & Greed: {fear_greed.get('index', 'N/A')} ({fear_greed.get('sentiment', 'N/A')})
-• Multi-Source Sentiment: {multi_sentiment.get('sentiment_signal', 'N/A') if multi_sentiment else 'LIMITED_DATA'} | Sources: {multi_sentiment.get('sources_analyzed', 0) if multi_sentiment else 0} | Score: {f"{multi_sentiment.get('average_sentiment'):.2f}" if multi_sentiment and multi_sentiment.get('average_sentiment') is not None else 'N/A'}
-• BTC Trend: {btc_data.get('trend', 'N/A')} | Price: ${f"{btc_data.get('price'):,}" if btc_data.get('price') else 'N/A'} | RSI: {f"{btc_data.get('rsi14'):.1f}" if btc_data.get('rsi14') is not None else 'N/A'} | Signal: {btc_data.get('signal', 'N/A')}
-• ETH Trend: {eth_data.get('trend', 'N/A')} | Price: ${f"{eth_data.get('price'):,}" if eth_data.get('price') else 'N/A'} | RSI: {f"{eth_data.get('rsi14'):.1f}" if eth_data.get('rsi14') is not None else 'N/A'} | Signal: {eth_data.get('signal', 'N/A')}
+• Multi-Sentiment: {multi_sentiment.get('sentiment_signal', 'N/A') if multi_sentiment else 'LIMITED_DATA'} | Sources: {multi_sentiment.get('sources_analyzed', 0) if multi_sentiment else 0} | Score: {f"{multi_sentiment.get('average_sentiment'):.2f}" if multi_sentiment and multi_sentiment.get('average_sentiment') is not None else 'N/A'}
+• BTC: {btc_data.get('trend', 'N/A')} | ${f"{btc_data.get('price'):,}" if btc_data.get('price') else 'N/A'} | RSI: {f"{btc_data.get('rsi14'):.1f}" if btc_data.get('rsi14') is not None else 'N/A'} | {btc_data.get('signal', 'N/A')}
+• ETH: {eth_data.get('trend', 'N/A')} | ${f"{eth_data.get('price'):,}" if eth_data.get('price') else 'N/A'} | RSI: {f"{eth_data.get('rsi14'):.1f}" if eth_data.get('rsi14') is not None else 'N/A'} | {eth_data.get('signal', 'N/A')}
 • S&P 500: {f"{stock_indices.get('sp500'):,.0f}" if stock_indices.get('sp500') is not None else 'N/A'} | VIX: {f"{stock_indices.get('vix'):.1f}" if stock_indices.get('vix') is not None else 'N/A'}
-• Global Market Cap: ${market_cap_data[0] if market_cap_data[0] else 0:,.0f} USD ({market_cap_data[1] if market_cap_data[1] else 0:+.1f}% 24h)
-• BTC Support/Resistance (PRIMARY): ${f"{btc_data.get('support'):,}" if btc_data.get('support') else 'N/A'} / ${f"{btc_data.get('resistance'):,}" if btc_data.get('resistance') else 'N/A'} (Pivot method - USE THESE)
-• ETH Support/Resistance (PRIMARY): ${f"{eth_data.get('support'):,}" if eth_data.get('support') else 'N/A'} / ${f"{eth_data.get('resistance'):,}" if eth_data.get('resistance') else 'N/A'} (Pivot method - USE THESE)
+• Market Cap: ${market_cap_data[0] if market_cap_data[0] else 0:,.0f} USD ({market_cap_data[1] if market_cap_data[1] else 0:+.1f}% 24h)
+• BTC S/R (PRIMARY): ${f"{btc_data.get('support'):,}" if btc_data.get('support') else 'N/A'} / ${f"{btc_data.get('resistance'):,}" if btc_data.get('resistance') else 'N/A'} (Pivot method - USE THESE)
+• ETH S/R (PRIMARY): ${f"{eth_data.get('support'):,}" if eth_data.get('support') else 'N/A'} / ${f"{eth_data.get('resistance'):,}" if eth_data.get('resistance') else 'N/A'} (Pivot method - USE THESE)
 
-⚠️ SUPPORT/RESISTANCE USAGE RULES:
-- PRIMARY: Always use pivot point levels (support/resistance) for entries and targets
-- REFERENCE: ATR levels (atr_support/atr_resistance) for volatility context only
-- REFERENCE: SMA levels (sma_support/sma_resistance) for trend context only
-- RISK MANAGEMENT: Use ATR for stop loss calculations
-- NEVER: Override pivot levels with ATR/SMA levels unless liquidation clusters present
+⚠️ S/R USAGE RULES:
+- PRIMARY: Use pivot point levels (support/resistance) for entries and targets
+- REFERENCE: ATR levels for volatility context only
+- REFERENCE: SMA levels for trend context only
+- RISK: Use ATR for stop loss calculations
+- NEVER: Override pivot levels with ATR/SMA unless liquidation clusters present
 
-🔧 ENHANCED TECHNICAL PRECISION (Advanced Analysis):
-- BTC Advanced: ATR: ${f"{btc_data.get('atr'):,.0f}" if btc_data.get('atr') else 'N/A'} ({f"{(btc_data.get('atr', 0) / (btc_data.get('price') or 1)) * 100:.1f}" if btc_data.get('atr') and btc_data.get('price') else 'N/A'}%) | SMA7/14/50: ${f"{btc_data.get('sma7'):,.0f}" if btc_data.get('sma7') else 'N/A'}/${f"{btc_data.get('sma14'):,.0f}" if btc_data.get('sma14') else 'N/A'}/${f"{btc_data.get('sma50'):,.0f}" if btc_data.get('sma50') else 'N/A'}
-- BTC Reference Levels: ATR Support: ${f"{btc_data.get('atr_support'):,.0f}" if btc_data.get('atr_support') else 'N/A'} | ATR Resistance: ${f"{btc_data.get('atr_resistance'):,.0f}" if btc_data.get('atr_resistance') else 'N/A'} | SMA Support: ${f"{btc_data.get('sma_support'):,.0f}" if btc_data.get('sma_support') else 'N/A'} | SMA Resistance: ${f"{btc_data.get('sma_resistance'):,.0f}" if btc_data.get('sma_resistance') else 'N/A'} | Volume: {btc_data.get('volume_trend', 'N/A')}
-- ETH Advanced: ATR: ${f"{eth_data.get('atr'):,.0f}" if eth_data.get('atr') else 'N/A'} ({f"{(eth_data.get('atr', 0) / (eth_data.get('price') or 1)) * 100:.1f}" if eth_data.get('atr') and eth_data.get('price') else 'N/A'}%) | SMA7/14/50: ${f"{eth_data.get('sma7'):,.0f}" if eth_data.get('sma7') else 'N/A'}/${f"{eth_data.get('sma14'):,.0f}" if eth_data.get('sma14') else 'N/A'}/${f"{eth_data.get('sma50'):,.0f}" if eth_data.get('sma50') else 'N/A'}
-- ETH Reference Levels: ATR Support: ${f"{eth_data.get('atr_support'):,.0f}" if eth_data.get('atr_support') else 'N/A'} | ATR Resistance: ${f"{eth_data.get('atr_resistance'):,.0f}" if eth_data.get('atr_resistance') else 'N/A'} | SMA Support: ${f"{eth_data.get('sma_support'):,.0f}" if eth_data.get('sma_support') else 'N/A'} | SMA Resistance: ${f"{eth_data.get('sma_resistance'):,.0f}" if eth_data.get('sma_resistance') else 'N/A'} | Volume: {eth_data.get('volume_trend', 'N/A')}
+🔧 TECHNICAL PRECISION:
+- **Volatility Ratio:** Current ATR / 24h Avg ATR | >1.5 = HIGH, >2.0 = EXTREME
+- BTC: ATR: ${f"{btc_data.get('atr'):,.0f}" if btc_data.get('atr') else 'N/A'} ({btc_atr_percentage}%) | SMA7/14/50: ${f"{btc_data.get('sma7'):,.0f}" if btc_data.get('sma7') else 'N/A'}/${f"{btc_data.get('sma14'):,.0f}" if btc_data.get('sma14') else 'N/A'}/${f"{btc_data.get('sma50'):,.0f}" if btc_data.get('sma50') else 'N/A'}
+- BTC Levels: ATR S/R: ${f"{btc_data.get('atr_support'):,.0f}" if btc_data.get('atr_support') else 'N/A'}/${f"{btc_data.get('atr_resistance'):,.0f}" if btc_data.get('atr_resistance') else 'N/A'} | SMA S/R: ${f"{btc_data.get('sma_support'):,.0f}" if btc_data.get('sma_support') else 'N/A'}/${f"{btc_data.get('sma_resistance'):,.0f}" if btc_data.get('sma_resistance') else 'N/A'} | Vol: {btc_data.get('volume_trend', 'N/A')}
+- ETH: ATR: ${f"{eth_data.get('atr'):,.0f}" if eth_data.get('atr') else 'N/A'} ({eth_atr_percentage}%) | SMA7/14/50: ${f"{eth_data.get('sma7'):,.0f}" if eth_data.get('sma7') else 'N/A'}/${f"{eth_data.get('sma14'):,.0f}" if eth_data.get('sma14') else 'N/A'}/${f"{eth_data.get('sma50'):,.0f}" if eth_data.get('sma50') else 'N/A'}
+- ETH Levels: ATR S/R: ${f"{eth_data.get('atr_support'):,.0f}" if eth_data.get('atr_support') else 'N/A'}/${f"{eth_data.get('atr_resistance'):,.0f}" if eth_data.get('atr_resistance') else 'N/A'} | SMA S/R: ${f"{eth_data.get('sma_support'):,.0f}" if eth_data.get('sma_support') else 'N/A'}/${f"{eth_data.get('sma_resistance'):,.0f}" if eth_data.get('sma_resistance') else 'N/A'} | Vol: {eth_data.get('volume_trend', 'N/A')}
 
 🔴 ADDITIONAL CONTEXT:
-• BTC Funding: {f"{btc_futures.get('funding_rate'):.3f}" if btc_futures.get('funding_rate') is not None else 'N/A'}% | ETH Funding: {f"{eth_futures.get('funding_rate'):.3f}" if eth_futures.get('funding_rate') is not None else 'N/A'}%
-• BTC Long/Short: {f"{btc_futures.get('long_ratio'):.0f}" if btc_futures.get('long_ratio') is not None else 'N/A'}/{f"{btc_futures.get('short_ratio'):.0f}" if btc_futures.get('short_ratio') is not None else 'N/A'} | ETH Long/Short: {f"{eth_futures.get('long_ratio'):.0f}" if eth_futures.get('long_ratio') is not None else 'N/A'}/{f"{eth_futures.get('short_ratio'):.0f}" if eth_futures.get('short_ratio') is not None else 'N/A'}
-• BTC Volume: ${f"{volumes.get('btc_volume', 0)/1e9:.1f}" if volumes.get('btc_volume') else 'N/A'}B | ETH Volume: ${f"{volumes.get('eth_volume', 0)/1e9:.1f}" if volumes.get('eth_volume') else 'N/A'}B
-• BTC Dominance: {btc_dominance:.1f}% | Inflation: {f"{inflation_data.get('inflation_rate'):.1f}" if inflation_data.get('inflation_rate') is not None else 'N/A'}% | Fed Rate: {f"{rates_data.get('fed_rate'):.2f}" if rates_data.get('fed_rate') is not None else 'N/A'}%
+• Funding: BTC {f"{btc_futures.get('funding_rate'):.3f}" if btc_futures.get('funding_rate') is not None else 'N/A'}% | ETH {f"{eth_futures.get('funding_rate'):.3f}" if eth_futures.get('funding_rate') is not None else 'N/A'}%
+• Long/Short: BTC {f"{btc_futures.get('long_ratio'):.0f}" if btc_futures.get('long_ratio') is not None else 'N/A'}/{f"{btc_futures.get('short_ratio'):.0f}" if btc_futures.get('short_ratio') is not None else 'N/A'} | ETH {f"{eth_futures.get('long_ratio'):.0f}" if eth_futures.get('long_ratio') is not None else 'N/A'}/{f"{eth_futures.get('short_ratio'):.0f}" if eth_futures.get('short_ratio') is not None else 'N/A'}
 
-🔵 MACROECONOMIC & MARKET CONTEXT:
-• M2 Money Supply: ${f"{m2_data.get('m2_supply', 0)/1e12:.1f}" if m2_data.get('m2_supply') else 'N/A'}T | Date: {m2_data.get('m2_date', 'N/A')}
-• NASDAQ: {f"{stock_indices.get('nasdaq'):,.0f}" if stock_indices.get('nasdaq') is not None else 'N/A'} | Dow Jones: {f"{stock_indices.get('dow_jones'):,.0f}" if stock_indices.get('dow_jones') is not None else 'N/A'}
-• Precious Metals: Gold ${f"{commodities.get('gold'):,.0f}" if commodities.get('gold') is not None else 'N/A'}/oz | Silver ${f"{commodities.get('silver'):,.2f}" if commodities.get('silver') is not None else 'N/A'}/oz
-• Energy Complex: Crude Oil ${f"{commodities.get('crude_oil'):,.1f}" if commodities.get('crude_oil') is not None else 'N/A'}/bbl | Natural Gas ${f"{commodities.get('natural_gas'):,.2f}" if commodities.get('natural_gas') is not None else 'N/A'}/MMBtu | Energy Signal: {self._assess_energy_signal(commodities)}
-• Social Activity: Forum Posts: {f"{social_metrics.get('forum_posts', 0):,}" if social_metrics.get('forum_posts') else 'N/A'} | BTC GitHub: {f"{social_metrics.get('btc_github_stars', 0):,}" if social_metrics.get('btc_github_stars') else 'N/A'} stars | ETH GitHub: {f"{social_metrics.get('eth_github_stars', 0):,}" if social_metrics.get('eth_github_stars') else 'N/A'} stars
+• BTC Dom: {btc_dominance:.1f}% | Inflation: {f"{inflation_data.get('inflation_rate'):.1f}" if inflation_data.get('inflation_rate') is not None else 'N/A'}% | Fed: {f"{rates_data.get('fed_rate'):.2f}" if rates_data.get('fed_rate') is not None else 'N/A'}%
 
-🕐 HISTORICAL CONTEXT & TREND VALIDATION:
+🔵 MACRO & MARKET:
+• M2: ${f"{m2_data.get('m2_supply', 0)/1e12:.1f}" if m2_data.get('m2_supply') else 'N/A'}T | Date: {m2_data.get('m2_date', 'N/A')}
+• Indices: NASDAQ {f"{stock_indices.get('nasdaq'):,.0f}" if stock_indices.get('nasdaq') is not None else 'N/A'} | Dow {f"{stock_indices.get('dow_jones'):,.0f}" if stock_indices.get('dow_jones') is not None else 'N/A'}
+• Metals: Gold ${f"{commodities.get('gold'):,.0f}" if commodities.get('gold') is not None else 'N/A'}/oz | Silver ${f"{commodities.get('silver'):,.2f}" if commodities.get('silver') is not None else 'N/A'}/oz
+• Energy: Oil ${f"{commodities.get('crude_oil'):,.1f}" if commodities.get('crude_oil') is not None else 'N/A'}/bbl | Gas ${f"{commodities.get('natural_gas'):,.2f}" if commodities.get('natural_gas') is not None else 'N/A'}/MMBtu | Signal: {self._assess_energy_signal(commodities)}
+• Social: Posts: {f"{social_metrics.get('forum_posts', 0):,}" if social_metrics.get('forum_posts') else 'N/A'} | BTC GH: {f"{social_metrics.get('btc_github_stars', 0):,}" if social_metrics.get('btc_github_stars') else 'N/A'} | ETH GH: {f"{social_metrics.get('eth_github_stars', 0):,}" if social_metrics.get('eth_github_stars') else 'N/A'}
+
+🕐 HISTORICAL CONTEXT:
 ==============================================
 
-🔵 BTC Multi-Timeframe Analysis:
-- Daily Trend: SMA20: ${self._safe_get_historical_value(historical, 'BTC', '1d', 'sma20'):,.0f} | SMA50: ${self._safe_get_historical_value(historical, 'BTC', '1d', 'sma50'):,.0f} | SMA200: ${self._safe_get_historical_value(historical, 'BTC', '1d', 'sma200'):,.0f}
-- Weekly Position: Price vs SMA200: {self._get_sma_position(historical, 'BTC')}
-- MACD Signal: {self._get_macd_signal(historical, 'BTC', '1d')}
-- Momentum State: {self._analyze_momentum_state(historical.get('BTC', {}))}
+🔵 BTC Multi-Timeframe:
+- Daily: SMA20: ${self._safe_get_historical_value(historical, 'BTC', '1d', 'sma20'):,.0f} | SMA50: ${self._safe_get_historical_value(historical, 'BTC', '1d', 'sma50'):,.0f} | SMA200: ${self._safe_get_historical_value(historical, 'BTC', '1d', 'sma200'):,.0f}
+- Weekly: Price vs SMA200: {self._get_sma_position(historical, 'BTC')}
+- MACD: {self._get_macd_signal(historical, 'BTC', '1d')}
+- Momentum: {self._analyze_momentum_state(historical.get('BTC', {}))}
 
-📊 ETH Multi-Timeframe Analysis:  
-- Daily Trend: SMA20: ${self._safe_get_historical_value(historical, 'ETH', '1d', 'sma20'):,.0f} | SMA50: ${self._safe_get_historical_value(historical, 'ETH', '1d', 'sma50'):,.0f} | SMA200: ${self._safe_get_historical_value(historical, 'ETH', '1d', 'sma200'):,.0f}
-- Weekly Position: Price vs SMA200: {self._get_sma_position(historical, 'ETH')}
-- MACD Signal: {self._get_macd_signal(historical, 'ETH', '1d')}
-- Momentum State: {self._analyze_momentum_state(historical.get('ETH', {}))}
+📊 ETH Multi-Timeframe:  
+- Daily: SMA20: ${self._safe_get_historical_value(historical, 'ETH', '1d', 'sma20'):,.0f} | SMA50: ${self._safe_get_historical_value(historical, 'ETH', '1d', 'sma50'):,.0f} | SMA200: ${self._safe_get_historical_value(historical, 'ETH', '1d', 'sma200'):,.0f}
+- Weekly: Price vs SMA200: {self._get_sma_position(historical, 'ETH')}
+- MACD: {self._get_macd_signal(historical, 'ETH', '1d')}
+- Momentum: {self._analyze_momentum_state(historical.get('ETH', {}))}
 
-⚡ CRITICAL HISTORICAL OVERRIDES:
-- Long-term Trend Direction: {self._determine_longterm_trend(historical)}
-- Historical Resistance Confluence: {self._find_historical_resistance_levels(historical)}
-- Multi-timeframe Momentum Alignment: {self._check_momentum_alignment(historical)}
+⚡ CRITICAL OVERRIDES:
+- Long-term Trend: {self._determine_longterm_trend(historical)}
+- Resistance Confluence: {self._find_historical_resistance_levels(historical)}
+- Momentum Alignment: {self._check_momentum_alignment(historical)}
 
-⚠️ FORMATTING REQUIREMENTS:
-- All prices must be whole numbers (no decimals): $106,384 not $106,384.79
-- Use comma separators for thousands: $106,384, $2,454
-- Percentages can have 1 decimal: 0.8%, 1.2%
-- Confidence levels are whole numbers: 70%, 75%
+⚠️ FORMATTING:
+- Prices: Whole numbers only ($106,384 not $106,384.79)
+- Use commas for thousands ($106,384, $2,454)
+- Percentages: 1 decimal (0.8%, 1.2%)
+- Confidence: Whole numbers (70%, 75%)
 
-📊 DATA INCOMPLETENESS HANDLING:
-- "N/A" or "nan" values: Ignore completely, do not fabricate data
-- Missing data sources: Reduce confidence by 10-15% per missing source
-- Limited data: Flag as "LIMITED_ANALYSIS" and reduce position size
+📊 DATA HANDLING:
+- "N/A" values: Ignore completely, do not fabricate
+- Missing sources: Reduce confidence by 10-15% per missing source
+- Limited data: Flag as "LIMITED_ANALYSIS", reduce position size
 - API failures: Use available data only, never assume missing values
 
-🔗 CORRELATION ANALYSIS INTEGRATION:
-- BTC-ETH Correlation: Use correlation data for joint positioning decisions
-- High correlation (>0.7): Similar position sizing and timing
-- Low correlation (<0.3): Independent positioning allowed
-- Negative correlation: Consider inverse positioning for diversification
-- Cross-asset correlation: Use market regime data for risk adjustment
+
 
 🎯 PROBABILISTIC FORECASTING:
-- Confidence levels represent win probability estimates
-- High confidence (75-85%): Strong signal alignment, higher win rate expected
-- Medium confidence (60-74%): Mixed signals, moderate win rate expected  
-- Low confidence (45-59%): Weak signals, lower win rate expected
-- Very low confidence (<45%): Avoid trading, wait for better setup
+- Confidence = win probability estimates
+- High (75-85%): Strong signal alignment, higher win rate
+- Medium (60-74%): Mixed signals, moderate win rate  
+- Low (45-59%): Weak signals, lower win rate
+- Very low (<45%): Avoid trading, wait for better setup
 
 ENHANCED 8-STEP INTERNAL ANALYSIS FRAMEWORK (Do NOT output these steps):
 ========================================================================
@@ -242,136 +365,168 @@ PRIORITY-BASED OVERRIDE LOGIC:
 • ⚠️ MEDIUM: Order Book + Whales = GATE execution (only trade if these align with direction)
 • 🟢 LOW: Traditional TA + Sentiment = Confirmation only, NEVER override higher priority signals
 
-STEP 0: CONFLICT RESOLUTION HIERARCHY (Handle Contradictions):
-- SUPER HIGH vs HIGH: Economic Events and Volatility override everything → FORCE FLAT if conflict
-- HIGH PRIORITY CONFLICTS: If Liquidation signals contradict Bond Market signals → Use MOST RECENT liquidation data, discount bond impact by 50%  
-- MEDIUM PRIORITY CONFLICTS: If Order Book vs Whale Movements contradict → Require 70%+ conviction on BOTH or reduce to SIDEWAYS
-- If Traditional TA conflicts with higher priorities → Ignore traditional signals completely
-- CONFLICT RESOLUTION RULE: When in doubt, choose FLAT position over conflicted trade
+📋 RULE REFERENCE SYSTEM (Use for confidence adjustments):
 
-STEP 0.5: SIDEWAYS MARKET DETECTION & TREND VALIDATION + NOISE FILTERING
-- Check if market is in sideways consolidation: Price range <1% and RSI 40-60 over last 3h
-- Check for mixed signals: If high-priority signals conflict by >50%, flag as potential sideways
-- BREAKOUT POTENTIAL CHECK: If sideways, check volume >1.5x 3-hour average and price within 0.5% of support/resistance
-- IF BREAKOUT POTENTIAL: Flag for conditional breakout setup in Step 7
-- IF SIDEWAYS DETECTED: Set bias to "SIDEWAYS" and proceed to Step 7
-- IF TRENDING: Continue with normal analysis flow
-- TREND VALIDATION: Check last 2-3 candles for momentum changes with noise filtering:
-  * Minimum threshold: >0.5% move required to trigger validation
-  * Confirmation requirement: 2 consecutive 1-hour candles in same direction (green/bullish, red/bearish) with volume >10% above 3-hour average
+STEP 0: CONFLICT RESOLUTION HIERARCHY:
+- [R0.1] SUPER HIGH vs HIGH: Economic Events and Volatility override everything → FORCE FLAT if conflict
+- [R0.2] HIGH PRIORITY: If Liquidation vs Bond Market contradict → Use MOST RECENT liquidation data, discount bond impact by 50%  
+- [R0.3] MEDIUM PRIORITY: If Order Book vs Whale Movements contradict → Require 70%+ conviction on BOTH or reduce to SIDEWAYS
+- [R0.4] Traditional TA conflicts with higher priorities → Ignore traditional signals completely
+- [R0.5] When in doubt, choose FLAT position over conflicted trade
+
+STEP 0.5: SIDEWAYS MARKET DETECTION & TREND VALIDATION:
+- [R0.6] Check sideways consolidation: Price range <1% and RSI 40-60 over last 3h
+- [R0.7] Check mixed signals: If high-priority signals conflict by >50%, flag as potential sideways
+- [R0.8] BREAKOUT POTENTIAL: If sideways, check volume >1.5x 3-hour average and price within 0.5% of support/resistance
+- [R0.9] IF BREAKOUT POTENTIAL: Flag for conditional breakout setup in Step 7
+- [R0.10] IF SIDEWAYS: Set bias to "SIDEWAYS" and proceed to Step 7
+- [R0.11] IF TRENDING: Continue with normal analysis flow
+- [R0.12] TREND VALIDATION: Check last 2-3 candles for momentum changes:
+  * Minimum threshold: >0.5% move required
+  * Confirmation: 2 consecutive 1-hour candles in same direction with volume >10% above 3-hour average
   * Apply individually to BTC and ETH
-  * If threshold met but no confirmation → Flag as potential noise, continue monitoring
-- REVERSAL ALERT: If >2 consecutive opposite candles with confirmation → Flag for bias adjustment
-- RULE: SIDEWAYS covers both consolidation patterns and mixed/uncertain signals, noise filtering prevents false signals
+  * If threshold met but no confirmation → Flag as potential noise
+- [R0.13] REVERSAL ALERT: If >2 consecutive opposite candles with confirmation → Flag for bias adjustment
+- [R0.14] RULE: SIDEWAYS covers both consolidation patterns and mixed/uncertain signals
 
-📊 TERMINOLOGY DEFINITIONS:
+📊 TERMINOLOGY:
 - Volatility Ratio: Current ATR / Average ATR (last 24h) - measures relative volatility
 - Mixed Signals >50%: When more than half of high-priority signals conflict
 - Adaptive Thresholds: Signal strength requirements that adjust to market volatility
 - Noise Filtering: Ignoring small price movements that don't confirm larger trends
 
-STEP 1: Economic Event Override Check + Bond Market Check
-- If Economic Calendar shows "AVOID_TRADING" OR high-impact event in next 24h → FORCE FLAT POSITION
-- If 10Y Treasury > 4.5% → REDUCE RISK APPETITE (smaller positions, higher stop losses)
-- If 10Y Treasury > 5.0% → CONSIDER FLAT POSITION (bonds competing with risk assets)
-- If Volatility Regime = "EXTREME" → Reduce position size by regime multiplier regardless of setup quality
+STEP 1: Economic Event Override Check + Bond Market Check + CFTC Institutional Override
+- [R1.1] If Economic Calendar shows "AVOID_TRADING" OR high-impact event in next 24h → FORCE FLAT POSITION
+- [R1.2] If 10Y Treasury > 4.5% → REDUCE RISK APPETITE (smaller positions, higher stop losses)
+- [R1.3] If 10Y Treasury > 5.0% → CONSIDER FLAT POSITION (bonds competing with risk assets)
+- [R1.4] If Volatility Regime = "EXTREME" → Reduce position size by regime multiplier regardless of setup quality
+- [R1.5] CFTC INSTITUTIONAL OVERRIDE RULES:
+  * If CFTC shows "STRONG_REVERSAL_RISK" → Reduce position size by 50% regardless of other signals
+  * If Smart Money vs Dumb Money ratio > 2.0 → Follow institutional direction with high confidence
+  * If Commercial hedgers show strong directional bias → Weight macro trend heavily
+  * If Positioning Extreme = "VERY_HIGH" → Consider flat position (contrarian opportunity)
+  * [BACKTESTING] Adjust confidence +5% if CFTC signal matched last 3 similar setups
 
 STEP 2: Liquidation Magnet Analysis (OVERRIDE TRADITIONAL S/R)
-- Check if liquidation clusters exist within 5% of current price
-- IF LIQUIDATION CLUSTERS FOUND: Use ONLY liquidation levels, ignore traditional S/R completely
-- IF NO LIQUIDATION CLUSTERS: Use traditional S/R but flag as "WEAKER SIGNALS"
-- Priority order: 1) Liquidation clusters, 2) Pivot point S/R (script-calculated), 3) ATR/SMA reference levels
-- MANDATORY: If liquidation pressure = "HIGH" → Liquidation targets become ONLY valid targets
-- RULE: Never mix liquidation and traditional levels in same trade plan
+- [R2.1] Check if liquidation clusters exist within 5% of current price
+- [R2.2] IF LIQUIDATION CLUSTERS FOUND: Use ONLY liquidation levels, ignore traditional S/R completely
+- [R2.3] IF NO LIQUIDATION CLUSTERS: Use traditional S/R but flag as "WEAKER SIGNALS"
+- [R2.4] Priority order: 1) Liquidation clusters, 2) Pivot point S/R (script-calculated), 3) ATR/SMA reference levels
+- [R2.5] MANDATORY: If liquidation pressure = "HIGH" → Liquidation targets become ONLY valid targets
+- [R2.6] RULE: Never mix liquidation and traditional levels in same trade plan
 
 STEP 3: Smart Money & Entry Timing Gate + Volume Confirmation + Adaptive Thresholds
-- Check Order Book imbalance with adaptive thresholds:
+- [R3.1] Check Order Book imbalance with adaptive thresholds:
   * Low Volatility: >60% = strong signal, 50-60% = moderate, <50% = weak
   * Medium Volatility: >75% = strong signal, 65-75% = moderate, <65% = weak
   * High/Extreme Volatility: >85% = strong signal, 75-85% = moderate, <75% = weak
-- Check Whale Movement signal with same adaptive thresholds:
+- [R3.2] Check Whale Movement signal with same adaptive thresholds:
   * Low Volatility: >60% alignment required
   * Medium Volatility: >75% alignment required
   * High/Extreme Volatility: >85% alignment required
-- VOLUME GATE: Only execute if volume confirms price signal (no weak volume signals)
-- EXECUTION GATE: Only execute if BOTH order book AND whale signals AND volume support trade direction
-- RULE: Don't fight smart money flow OR weak volume, adapt thresholds to market conditions
+- [R3.3] VOLUME GATE: Only execute if volume confirms price signal (no weak volume signals)
+- [R3.4] EXECUTION GATE: Only execute if BOTH order book AND whale signals AND volume support trade direction
+- [R3.5] RULE: Don't fight smart money flow OR weak volume, adapt thresholds to market conditions
+- [BACKTESTING] Adjust confidence +5% if smart money signals matched last 3 similar setups
 
 STEP 4: Technical Analysis WITH Historical Validation + Multi-timeframe Filter
-- RSI, pivot point support/resistance (if not overridden by liquidations), trend direction
-- BTC/ETH signals for directional bias
-- HISTORICAL CHECK: Confirm signals align with multi-timeframe momentum
-- WEEKLY/MONTHLY TREND: Only trade WITH long-term trend unless strong reversal signals
-- OPTIONAL 4H FILTER: Check 4-hour SMA20 direction vs 1-hour trend for both BTC and ETH
+- [R4.1] RSI, pivot point support/resistance (if not overridden by liquidations), trend direction
+- [R4.2] BTC/ETH signals for directional bias
+- [R4.3] HISTORICAL CHECK: Confirm signals align with multi-timeframe momentum
+- [R4.4] WEEKLY/MONTHLY TREND: Only trade WITH long-term trend unless strong reversal signals
+- [R4.5] OPTIONAL 4H FILTER: Check 4-hour SMA20 direction vs 1-hour trend for both BTC and ETH
   * If aligned: +5% confidence (capped at 85%) for respective coin
   * If misaligned: -5% confidence and flag "Trend Divergence Warning" for respective coin
-- RULE: Technical signals must pass historical momentum filter, 4h filter is advisory only
+- [R4.6] RULE: Technical signals must pass historical momentum filter, 4h filter is advisory only
+- [BACKTESTING] Adjust confidence +5% if technical signals matched last 3 similar setups
 
-STEP 5: Macro Trend Alignment Check
-- Fear & Greed, BTC dominance, S&P 500/VIX for overall market bias
-- Multi-source sentiment for crowd positioning
-- Social metrics analysis: Forum activity, GitHub stars, developer sentiment
-- RULE: Use for position sizing confidence, not trade direction
+STEP 5: MACRO TREND + SENTIMENT + NETWORK HEALTH + SOCIAL ANALYSIS
+- [R5.1] Fear & Greed, BTC dominance, S&P 500/VIX for overall market bias
+- [R5.2] Multi-source sentiment for crowd positioning
+- [R5.3] Social metrics: Forum activity spikes (>20% = sentiment shift), GitHub stars, developer activity
+- [R5.4] NETWORK HEALTH ANALYSIS:
+  * BTC Hash Rate: High = strong security, bullish long-term
+  * BTC Mining Difficulty: Increasing = network growth, positive signal
+  * BTC Mempool: High congestion = network demand, potential price pressure
+  * BTC Active Addresses: Increasing = adoption growth, bullish
+  * ETH Gas Pressure: High = network demand, positive for ETH
+  * ETH Total Supply: Monitor for supply changes affecting price
+- [R5.5] RULE: Use for position sizing confidence, not trade direction. Network health confirms long-term trend strength.
 
-STEP 5.5: SOCIAL METRICS & DEVELOPER ACTIVITY ANALYSIS
-- Forum activity spikes: >20% increase in posts = potential sentiment shift
-- GitHub activity: BTC/ETH star changes indicate developer interest
-- Developer sentiment: High activity = positive long-term outlook
-- Social momentum: Trending topics and community engagement
-- RULE: Social metrics are confirmation signals, not primary drivers
+STEP 5.5: CORRELATION & CROSS-ASSET ANALYSIS
+- [R5.6] BTC-ETH Correlation Analysis:
+  * High correlation (>0.7): Similar position sizing and timing for both
+  * Low correlation (<0.3): Independent positioning allowed
+  * Negative correlation: Consider inverse positioning for diversification
+  * Correlation trend: Increasing = more synchronized markets, decreasing = divergence opportunity
+- [R5.7] Cross-Asset Correlation Analysis:
+  * Market Regime: RISK_ON vs RISK_OFF determines crypto-equity relationship
+  * VIX Analysis: High VIX = risk-off, crypto may decouple from equities
+  * SP500 Correlation: Strong equity moves may influence crypto direction
+  * Commodity Correlations: Gold/Oil moves may signal macro shifts
+- [R5.8] RULE: Use correlations for position sizing and risk management, not primary trade direction
 
 STEP 6: Sentiment Risk Assessment
-- Check funding rates and long/short ratios for overcrowded trades
-- High funding = crowded positioning = reversal risk
-- Social sentiment extremes = potential reversal signals
-- RULE: Avoid trading in same direction as extreme crowd positioning
+- [R6.1] Check funding rates and long/short ratios for overcrowded trades
+- [R6.2] High funding = crowded positioning = reversal risk
+- [R6.3] Social sentiment extremes = potential reversal signals
+- [R6.4] RULE: Avoid trading in same direction as extreme crowd positioning
 
-STEP 7: Enhanced Execution Planning + Conditional Breakout Setup
-- Entry zones: Use liquidation clusters if present, else pivot point S/R
-- Stop loss: Place beyond next liquidation cluster or pivot point S/R level
-- Take profit: Target liquidation clusters as magnetic price targets
-- MINIMUM 1:2 R/R, but adjust for liquidation cluster distances
-- CONDITIONAL BREAKOUT: If breakout potential flagged in Step 0.5, create additional breakout plan:
+STEP 7: Enhanced Execution Planning + Conditional Breakout Setup + Correlation-Based Diversification
+- [R7.1] Entry zones: Use liquidation clusters if present, else pivot point S/R
+- [R7.2] Stop loss: Place beyond next liquidation cluster or pivot point S/R level
+- [R7.3] Take profit: Target liquidation clusters as magnetic price targets
+- [R7.4] MINIMUM 1:2 R/R, but adjust for liquidation cluster distances
+- [R7.5] CORRELATION-BASED DIVERSIFICATION:
+  * High BTC-ETH correlation (>0.7): Similar position sizing and timing for both coins
+  * Low correlation (<0.3): Independent positioning allowed, diversify entry timing
+  * Negative correlation: Consider inverse positioning for portfolio diversification
+  * Cross-asset regime check: If RISK_OFF → Reduce crypto exposure, if RISK_ON → Normal sizing
+- [R7.6] CONDITIONAL BREAKOUT: If breakout potential flagged in Step 0.5, create additional breakout plan:
   * Entry: On breakout confirmation (candle close > resistance or < support by 1% with volume spike)
   * SL: Beyond the opposite level (1% below support for long, 1% above resistance for short)
   * TP: Next liquidation cluster or 2% move
   * Confidence: Reduce by 10% due to uncertainty
-- RULE: Liquidation-aware stop/target placement
+- [R7.7] RULE: Liquidation-aware stop/target placement with correlation-based diversification
 
-STEP 8: Dynamic Risk Management & Position Sizing + Confidence Calculation + Reversal Detection + ATR Trigger
-- Normal market conditions = 100% position size (full intended trade)
-- If Volatility Regime = "HIGH" or "EXTREME" → Reduce to 75% or 50%
-- If Economic Calendar shows high risk → Reduce by 25% 
-- If fighting Whale signals → Reduce by 25%
-- REVERSAL DETECTION: Check latest 3 candles for both BTC and ETH individually
-  * If BTC shows >1% opposite movement → Reduce BTC position to 50%
-  * If ETH shows >1% opposite movement → Reduce ETH position to 50%
-- ATR VOLATILITY TRIGGER: Check 1-hour ATR for both BTC and ETH individually
-  * If BTC 1h ATR increases >2% from prior hour → Reduce BTC position by 25%
-  * If ETH 1h ATR increases >2% from prior hour → Reduce ETH position by 25%
-  * If BOTH ATRs spike >2% → Reduce both positions by 25% (correlation risk)
-- If multiple risk factors present → Can reduce to minimum 25%
-- If all signals align perfectly → Can use 100% even in elevated volatility
-- CONFIDENCE CALCULATION: Base confidence = average of signal strengths (order book, volume, RSI, liquidation, whale movements)
-- CONFIDENCE ADJUSTMENT: +5% if all high-priority signals align, -5% if misaligned by >50%
-- CONFIDENCE CAP: Maximum 85% to account for market uncertainty
-- POSITION SIZE REPRESENTS: Percentage of your intended trade size, NOT portfolio allocation
-- OUTPUT: Present individual position sizes in each execution plan (100%, 75%, 50%, or 25%)
+STEP 8: DYNAMIC RISK MANAGEMENT & POSITION SIZING
+- [R8.1] **Position Size Rules:**
+  * Normal conditions: 100% (full position)
+  * Volatility Regime HIGH: 75% | EXTREME: 50%
+  * Economic Calendar high risk: -25%
+  * Fighting Whale signals: -25%
+  * CFTC STRONG_REVERSAL_RISK: -50% (institutional override)
+  * CFTC Smart Money ratio <0.5: -25% (fighting institutions)
 
-⚠️ REMINDER: You MUST follow the above 8-STEP FRAMEWORK (Steps 0-8) to analyze the data. Do not skip any steps.
+- [R8.2] **Reversal Detection (3-candle check):**
+  * BTC >1% opposite movement: Reduce to 50%
+  * ETH >1% opposite movement: Reduce to 50%
+
+- [R8.3] **ATR Volatility Trigger (1h ATR >2% increase):**
+  * BTC ATR spike: -25% | ETH ATR spike: -25%
+  * BOTH ATRs spike: -25% each (correlation risk)
+
+- [R8.4] **Confidence Calculation:**
+  * Base: Average of signal strengths (order book, volume, RSI, liquidation, whale, CFTC)
+  * Adjustment: +5% if all high-priority aligned, -5% if >50% misaligned
+  * CFTC Boost: +10% if aligned, -10% if misaligned
+  * [BACKTESTING] Adjust confidence +5% if signal matched last 3 similar setups
+  * Cap: Maximum 85% (market uncertainty)
+
+- [R8.5] **Position Size Output:** Individual percentages (100%, 75%, 50%, 25%) per coin
+
+⚠️ REMINDER: Follow the above ENHANCED DECISION FRAMEWORK (Steps 1-8). Do not skip any steps.
 
 POSITION SIZE INSTRUCTION:
 Position Size represents the recommended position size for each coin individually (not portfolio allocation).
-- Standard position: 100% (full position)
-- Reduced risk: 75% (moderate position) 
-- High risk conditions: 50% (conservative position)
-- Extreme risk: 25% (minimal position)
+- Standard: 100% | Reduced risk: 75% | High risk: 50% | Extreme risk: 25%
 - Reversal detection: 50% if >1% opposite movement in last 3 candles
-Present in each execution plan as percentage of intended position size for that specific coin.
+Present in each execution plan as percentage of intended trade size for that specific coin.
 
 CRITICAL DECISION TREE:
 ======================
-1. Sideways Market Detected? → If YES: Output "SIDEWAYS - No Entry, Monitor for breakout"
+0. Data <50% (<32/65 points)? → If YES: Output "INSUFFICIENT_DATA - FLAT POSITION"
+1. Sideways Market? → If YES: Output "SIDEWAYS - No Entry, Monitor for breakout"
 2. Economic Events = FLAT? → If YES: Output "FLAT - Major events pending"
 3. Extreme Volatility? → If YES: Reduce size by regime multiplier  
 4. Near Liquidation Clusters? → If YES: Use clusters as primary targets, ignore pivot point S/R
@@ -381,17 +536,26 @@ CRITICAL DECISION TREE:
 
 OUTPUT PRIORITY: Economic Events > Liquidation Targets > Entry Timing > Pivot Point TA
 
-PRIORITY-INTEGRATED TIMEFRAME LOGIC + VOLATILITY-BASED ACTIVATION:
-- SUPER HIGH PRIORITY OVERRIDES: If Economic Events pending → Extend timeframe by 2x (wait for clarity)
-- HIGH PRIORITY LIQUIDATION TARGETS: 2-6 hours (liquidations happen fast, use shorter timeframes)
-  * VOLATILITY ACTIVATION: If Volatility Ratio >0.6 → Use 2-4h, if >0.9 with volume >2x average → Use 1-2h
-- HIGH PRIORITY BOND MARKET MOVES: 12-48 hours (macro moves take time to develop)
-- MEDIUM PRIORITY SMART MONEY: 4-12 hours (institutional flows develop over hours)
-  * VOLATILITY ACTIVATION: If Volatility Ratio >0.6 → Use 2-4h, if >0.9 with volume >2x average → Use 1-2h
-- LOW PRIORITY PIVOT POINT TA: 6-24 hours (standard technical patterns)
-- VOLATILITY REGIME ADJUSTMENT: If "EXTREME" → Cut all timeframes by 50% (faster moves)
-- CONFLICT RESOLUTION: If multiple timeframes suggested → Use the SHORTEST from highest priority signal
-FINAL RULE: Priority level determines base timeframe, volatility regime adjusts duration and activation
+📋 RULE REFERENCE SUMMARY:
+- [R0.1-R0.14] Conflict Resolution & Sideways Detection
+- [R1.1-R1.5] Economic & CFTC Overrides  
+- [R2.1-R2.6] Liquidation Analysis
+- [R3.1-R3.5] Smart Money & Volume Gates
+- [R4.1-R4.6] Technical & Historical Validation
+- [R5.1-R5.8] Macro, Network Health & Correlations
+- [R6.1-R6.4] Sentiment Risk Assessment
+- [R7.1-R7.7] Execution Planning & Diversification
+- [R8.1-R8.5] Risk Management & Position Sizing
+
+PRIORITY-INTEGRATED TIMEFRAME LOGIC:
+- SUPER HIGH: Economic Events pending → Extend timeframe by 2x (wait for clarity)
+- HIGH: Liquidation Targets 2-6h, Bond Market 12-48h
+  * VOLATILITY: >0.6 → 2-4h, >0.9 with volume >2x → 1-2h
+- MEDIUM: Smart Money 4-12h
+- LOW: Pivot Point TA 6-24h
+- VOLATILITY: "EXTREME" → Cut all timeframes by 50%
+- CONFLICT: Use SHORTEST from highest priority signal
+FINAL RULE: Priority level determines base timeframe, volatility regime adjusts duration
 
 REQUIRED OUTPUT FORMAT (CONCISE ONLY):
 =====================================
@@ -429,19 +593,21 @@ REQUIRED OUTPUT FORMAT (CONCISE ONLY):
 
 <b>━━━ ⚠️ RISK NOTES ━━━</b>
 - Correlation Risk: [BTC-ETH positioning notes]
-- Volatility Regime: [regime] detected - position sizing adjusted accordingly
+- Volatility Regime: [regime] - position sizing adjusted
 - Macro Risk: [traditional market alignment]
+- CFTC Risk: [Institutional positioning risk]
 - Data Quality: [Limited analysis warnings if applicable]
 - Social Sentiment: [Forum/GitHub activity insights]
 - Win Probability: [Confidence-based win rate estimate]
 
 [IF SIDEWAYS DETECTED, REPLACE EXECUTION PLANS WITH:]
 <b>━━━ ⏸️ MARKET STATUS: SIDEWAYS ━━━</b>
-- No Entry - Monitor for breakout (consolidation) or signal alignment (mixed signals)
+- No Entry - Monitor for breakout or signal alignment
 - Key Levels: Support $[X], Resistance $[Y]
 - Breakout Watch: Volume >1.5x average near levels
 - Confidence: [XX]% (sideways uncertainty)
-- Correlation Status: [BTC-ETH correlation during sideways]
+- Correlation: [BTC-ETH correlation during sideways]
+- CFTC: [Institutional positioning during sideways]
 
 [IF BREAKOUT POTENTIAL DETECTED, ADD ADDITIONAL PLAN:]
 <b>━━━ 🎯 CONDITIONAL BREAKOUT SETUP ━━━</b>
@@ -462,7 +628,7 @@ REQUIRED OUTPUT FORMAT (CONCISE ONLY):
 - Confidence: [XX]% (breakout uncertainty reduces confidence)
 
 ⚠️ FINAL REMINDER: Keep total output under 600 words. Be concise, actionable, and precise.
-Focus on the most critical information: Executive Summary, Execution Plans, and Risk Notes.
+Focus on Executive Summary, Execution Plans, and Risk Notes.
 
 STOP HERE. Keep under 600 words total. Be precise and actionable."""
         
@@ -592,12 +758,43 @@ STOP HERE. Keep under 600 words total. Be precise and actionable."""
         if cross_asset_correlations.get("market_regime"): count += 1
         if cross_asset_correlations.get("crypto_equity_regime"): count += 1
         
+        # 15. CFTC Positioning Data (8 points total)
+        cftc_positioning = market_data.get("cftc_positioning", {})
+        if cftc_positioning.get("institutional_sentiment"): count += 1
+        if cftc_positioning.get("commercial_signal"): count += 1
+        if cftc_positioning.get("leveraged_positioning_pct") is not None: count += 1
+        if cftc_positioning.get("contrarian_signal"): count += 1
+        if cftc_positioning.get("smart_money_net") is not None: count += 1
+        if cftc_positioning.get("overall_cftc_sentiment"): count += 1
+        if cftc_positioning.get("positioning_extreme"): count += 1
+        if cftc_positioning.get("open_interest"): count += 1
+        
         return count
 
     # ============================================================================
     # NEW HELPER FUNCTIONS - ADD HERE
     # ============================================================================
     
+    def _safe_get_numeric(self, data, key, default=0):
+        """Safely extract numeric value from data, handling dict/None cases"""
+        try:
+            if data is None:
+                print(f"[WARN] Data is None for key {key}, using default {default}")
+                return default
+            value = data.get(key, default)
+            if isinstance(value, (int, float)):
+                return value
+            elif isinstance(value, dict):
+                print(f"[WARN] Expected numeric value for {key}, got dict: {value}")
+                return default
+            elif value is None:
+                return default
+            else:
+                return float(value)
+        except (ValueError, TypeError, AttributeError) as e:
+            print(f"[WARN] Could not convert {key} value '{value}' to numeric, using default {default}. Error: {e}")
+            return default
+
     def _analyze_momentum_state(self, coin_historical):
         """Analyze momentum across timeframes"""
         if not coin_historical:
@@ -1507,7 +1704,7 @@ DO NOT include price targets, entry points, stop losses, or trading recommendati
             
             if "error" in ai_result:
                 print(f"[CRITICAL] AI prediction failed: {ai_result['error']}")
-                return None
+                return ai_result
             
             # Final validation: Check if prediction was blocked due to data quality
             if ai_result.get('status') == 'BLOCKED':
@@ -1534,15 +1731,208 @@ DO NOT include price targets, entry points, stop losses, or trading recommendati
             
         except Exception as e:
             print(f"[CRITICAL] AI prediction workflow failed: {e}")
-            return None
+            return {
+                "prediction": None,
+                "error": str(e),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "status": "FAILED"
+            }
+    
+    def _create_data_completeness_tracker(self, market_data):
+        """Create a visual tracker showing which data points are available vs missing"""
+        tracker_lines = []
+        
+        # 1. CRYPTO PRICES (2 points)
+        crypto = market_data.get("crypto", {})
+        btc_available = "✅" if crypto.get("btc") else "❌"
+        eth_available = "✅" if crypto.get("eth") else "❌"
+        tracker_lines.append(f"💰 Crypto Prices: BTC {btc_available} | ETH {eth_available}")
+        
+        # 2. TECHNICAL INDICATORS (12 points - 6 per coin)
+        tech = market_data.get("technical_indicators", {})
+        btc_tech = tech.get("BTC", {})
+        eth_tech = tech.get("ETH", {})
+        
+        btc_rsi = "✅" if btc_tech.get("rsi14") is not None else "❌"
+        btc_signal = "✅" if btc_tech.get("signal") else "❌"
+        btc_trend = "✅" if btc_tech.get("trend") else "❌"
+        btc_support = "✅" if btc_tech.get("support") else "❌"
+        btc_resistance = "✅" if btc_tech.get("resistance") else "❌"
+        btc_volatility = "✅" if btc_tech.get("volatility") else "❌"
+        
+        eth_rsi = "✅" if eth_tech.get("rsi14") is not None else "❌"
+        eth_signal = "✅" if eth_tech.get("signal") else "❌"
+        eth_trend = "✅" if eth_tech.get("trend") else "❌"
+        eth_support = "✅" if eth_tech.get("support") else "❌"
+        eth_resistance = "✅" if eth_tech.get("resistance") else "❌"
+        eth_volatility = "✅" if eth_tech.get("volatility") else "❌"
+        
+        tracker_lines.append(f"📈 Technical Indicators: BTC {btc_rsi}{btc_signal}{btc_trend}{btc_support}{btc_resistance}{btc_volatility} | ETH {eth_rsi}{eth_signal}{eth_trend}{eth_support}{eth_resistance}{eth_volatility}")
+        
+        # 3. FUTURES DATA (8 points - 4 per coin)
+        futures = market_data.get("futures", {})
+        btc_futures = futures.get("BTC", {})
+        eth_futures = futures.get("ETH", {})
+        
+        btc_funding = "✅" if btc_futures.get("funding_rate") is not None else "❌"
+        btc_long = "✅" if btc_futures.get("long_ratio") is not None else "❌"
+        btc_short = "✅" if btc_futures.get("short_ratio") is not None else "❌"
+        btc_oi = "✅" if btc_futures.get("open_interest") else "❌"
+        
+        eth_funding = "✅" if eth_futures.get("funding_rate") is not None else "❌"
+        eth_long = "✅" if eth_futures.get("long_ratio") is not None else "❌"
+        eth_short = "✅" if eth_futures.get("short_ratio") is not None else "❌"
+        eth_oi = "✅" if eth_futures.get("open_interest") else "❌"
+        
+        tracker_lines.append(f"📊 Futures Data: BTC {btc_funding}{btc_long}{btc_short}{btc_oi} | ETH {eth_funding}{eth_long}{eth_short}{eth_oi}")
+        
+        # 4. MARKET SENTIMENT (3 points)
+        fear_greed = market_data.get("fear_greed", {})
+        btc_dom = market_data.get("btc_dominance")
+        market_cap = market_data.get("market_cap")
+        
+        fg_index = "✅" if fear_greed.get("index") is not None else "❌"
+        btc_dom_avail = "✅" if btc_dom is not None else "❌"
+        mc_avail = "✅" if market_cap else "❌"
+        
+        tracker_lines.append(f"😱 Market Sentiment: F&G {fg_index} | BTC Dom {btc_dom_avail} | MC {mc_avail}")
+        
+        # 5. TRADING VOLUMES (2 points)
+        volumes = market_data.get("volumes", {})
+        btc_vol = "✅" if volumes.get("btc_volume") else "❌"
+        eth_vol = "✅" if volumes.get("eth_volume") else "❌"
+        
+        tracker_lines.append(f"📊 Trading Volumes: BTC {btc_vol} | ETH {eth_vol}")
+        
+        # 6. MACROECONOMIC (4 points)
+        m2_data = market_data.get("m2_supply", {})
+        inflation = market_data.get("inflation", {})
+        rates = market_data.get("interest_rates", {})
+        
+        m2_avail = "✅" if m2_data.get("m2_supply") else "❌"
+        inflation_avail = "✅" if inflation.get("inflation_rate") is not None else "❌"
+        fed_rate = "✅" if rates.get("fed_rate") is not None else "❌"
+        t10_yield = "✅" if rates.get("t10_yield") is not None else "❌"
+        
+        tracker_lines.append(f"🏛️ Macroeconomic: M2 {m2_avail} | Inflation {inflation_avail} | Fed {fed_rate} | 10Y {t10_yield}")
+        
+        # 7. STOCK INDICES (4 points)
+        stock_indices = market_data.get("stock_indices", {})
+        sp500 = "✅" if stock_indices.get("sp500") is not None else "❌"
+        nasdaq = "✅" if stock_indices.get("nasdaq") is not None else "❌"
+        dow = "✅" if stock_indices.get("dow_jones") is not None else "❌"
+        vix = "✅" if stock_indices.get("vix") is not None else "❌"
+        
+        tracker_lines.append(f"📈 Stock Indices: S&P500 {sp500} | NASDAQ {nasdaq} | Dow {dow} | VIX {vix}")
+        
+        # 8. COMMODITIES (4 points)
+        commodities = market_data.get("commodities", {})
+        gold = "✅" if commodities.get("gold") is not None else "❌"
+        silver = "✅" if commodities.get("silver") is not None else "❌"
+        oil = "✅" if commodities.get("crude_oil") is not None else "❌"
+        gas = "✅" if commodities.get("natural_gas") is not None else "❌"
+        
+        tracker_lines.append(f"🥇 Commodities: Gold {gold} | Silver {silver} | Oil {oil} | Gas {gas}")
+        
+        # 9. SOCIAL METRICS (6 points)
+        social = market_data.get("social_metrics", {})
+        forum_posts = "✅" if social.get("forum_posts") else "❌"
+        forum_topics = "✅" if social.get("forum_topics") else "❌"
+        btc_github = "✅" if social.get("btc_github_stars") else "❌"
+        eth_github = "✅" if social.get("eth_github_stars") else "❌"
+        btc_commits = "✅" if social.get("btc_recent_commits") else "❌"
+        eth_commits = "✅" if social.get("eth_recent_commits") else "❌"
+        
+        tracker_lines.append(f"📱 Social Metrics: Posts {forum_posts} | Topics {forum_topics} | BTC Git {btc_github} | ETH Git {eth_github} | BTC Commits {btc_commits} | ETH Commits {eth_commits}")
+        
+        # 10. HISTORICAL DATA (2 points)
+        historical = market_data.get("historical_data", {})
+        btc_hist = "✅" if historical.get("BTC") else "❌"
+        eth_hist = "✅" if historical.get("ETH") else "❌"
+        
+        tracker_lines.append(f"📊 Historical Data: BTC {btc_hist} | ETH {eth_hist}")
+        
+        # 11. ENHANCED DATA SOURCES (8 points)
+        order_book = market_data.get("order_book_analysis", {})
+        liquidation = market_data.get("liquidation_heatmap", {})
+        economic_cal = market_data.get("economic_calendar", {})
+        multi_sentiment = market_data.get("multi_source_sentiment", {})
+        whale_data = market_data.get("whale_movements", {})
+        volatility = market_data.get("volatility_regime", {})
+        
+        ob_avail = "✅" if order_book else "❌"
+        liq_avail = "✅" if liquidation else "❌"
+        econ_avail = "✅" if economic_cal else "❌"
+        multi_avail = "✅" if multi_sentiment else "❌"
+        whale_avail = "✅" if whale_data else "❌"
+        vol_avail = "✅" if volatility else "❌"
+        
+        tracker_lines.append(f"🔧 Enhanced Sources: Order Book {ob_avail} | Liquidation {liq_avail} | Economic {econ_avail} | Multi-Sentiment {multi_avail} | Whale {whale_avail} | Volatility {vol_avail}")
+        
+        # 12. NETWORK HEALTH (6 points)
+        btc_network = market_data.get("btc_network_health", {})
+        eth_network = market_data.get("eth_network_health", {})
+        
+        btc_hash = "✅" if btc_network.get("hash_rate") else "❌"
+        btc_diff = "✅" if btc_network.get("mining_difficulty") else "❌"
+        btc_mempool = "✅" if btc_network.get("mempool_congestion") is not None else "❌"
+        btc_addresses = "✅" if btc_network.get("active_addresses") is not None else "❌"
+        eth_gas = "✅" if eth_network.get("gas_pressure") is not None else "❌"
+        eth_supply = "✅" if eth_network.get("total_supply") else "❌"
+        
+        tracker_lines.append(f"🌐 Network Health: BTC Hash {btc_hash} | BTC Diff {btc_diff} | BTC Mempool {btc_mempool} | BTC Addr {btc_addresses} | ETH Gas {eth_gas} | ETH Supply {eth_supply}")
+        
+        # 13. CORRELATIONS (8 points)
+        crypto_corr = market_data.get("crypto_correlations", {})
+        cross_asset = market_data.get("cross_asset_correlations", {})
+        
+        btc_eth_30d = "✅" if crypto_corr.get("btc_eth_correlation_30d") is not None else "❌"
+        corr_strength = "✅" if crypto_corr.get("correlation_strength") else "❌"
+        corr_direction = "✅" if crypto_corr.get("correlation_direction") else "❌"
+        corr_trend = "✅" if crypto_corr.get("correlation_trend") else "❌"
+        market_regime = "✅" if cross_asset.get("market_regime") else "❌"
+        crypto_equity = "✅" if cross_asset.get("crypto_equity_regime") else "❌"
+        sp500_change = "✅" if cross_asset.get("sp500_change_24h") is not None else "❌"
+        equity_significance = "✅" if cross_asset.get("equity_move_significance") else "❌"
+        
+        tracker_lines.append(f"🔗 Correlations: BTC-ETH 30d {btc_eth_30d} | Strength {corr_strength} | Direction {corr_direction} | Trend {corr_trend} | Market Regime {market_regime} | Crypto-Equity {crypto_equity} | SP500 {sp500_change} | Equity Sig {equity_significance}")
+        
+        # 14. CFTC POSITIONING (8 points)
+        cftc = market_data.get("cftc_positioning", {})
+        
+        inst_sentiment = "✅" if cftc.get("institutional_sentiment") else "❌"
+        commercial_signal = "✅" if cftc.get("commercial_signal") else "❌"
+        leveraged_pct = "✅" if cftc.get("leveraged_positioning_pct") is not None else "❌"
+        contrarian = "✅" if cftc.get("contrarian_signal") else "❌"
+        smart_money = "✅" if cftc.get("smart_money_net") is not None else "❌"
+        overall_sentiment = "✅" if cftc.get("overall_cftc_sentiment") else "❌"
+        positioning_extreme = "✅" if cftc.get("positioning_extreme") else "❌"
+        open_interest = "✅" if cftc.get("open_interest") else "❌"
+        
+        tracker_lines.append(f"🏛️ CFTC Positioning: Inst Sentiment {inst_sentiment} | Commercial {commercial_signal} | Leveraged % {leveraged_pct} | Contrarian {contrarian} | Smart Money {smart_money} | Overall {overall_sentiment} | Extreme {positioning_extreme} | OI {open_interest}")
+        
+        return "\n".join(tracker_lines)
 
     async def generate_prediction(self, market_data, test_mode=False, reasoning_mode=False):
         """Generate AI prediction (async wrapper for compatibility)"""
         try:
-            return self.run_ai_prediction(market_data, test_mode, reasoning_mode, save_results=True, send_telegram=True)
+            result = self.run_ai_prediction(market_data, test_mode, reasoning_mode, save_results=True, send_telegram=True)
+            if result is None:
+                return {
+                    "prediction": None,
+                    "error": "AI prediction failed - no result returned",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "status": "FAILED"
+                }
+            return result
         except Exception as e:
             print(f"[ERROR] AI prediction generation failed: {e}")
-            return None
+            return {
+                "prediction": None,
+                "error": str(e),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "status": "FAILED"
+            }
 
 
 # Utility function for external use

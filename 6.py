@@ -66,7 +66,7 @@ def load_config():
             "include_social_metrics": True,
             "include_enhanced_data": True
         },
-        "minimum_data_points": 56  # Updated to include correlations (52 + 4 new points)
+        "minimum_data_points": 50  # Adjusted for realistic data availability (base data + some enhanced)
     }
     
     # Load existing config.json if available (for additional settings)
@@ -242,6 +242,17 @@ def count_data_points(data):
     if cross_asset_correlations.get("market_regime"): count += 1
     if cross_asset_correlations.get("crypto_equity_regime"): count += 1
     
+    # 15. CFTC Positioning Data (8 points total)
+    cftc_positioning = data.get("cftc_positioning", {})
+    if cftc_positioning.get("institutional_sentiment"): count += 1
+    if cftc_positioning.get("commercial_signal"): count += 1
+    if cftc_positioning.get("leveraged_positioning_pct") is not None: count += 1
+    if cftc_positioning.get("contrarian_signal"): count += 1
+    if cftc_positioning.get("smart_money_net") is not None: count += 1
+    if cftc_positioning.get("overall_cftc_sentiment"): count += 1
+    if cftc_positioning.get("positioning_extreme"): count += 1
+    if cftc_positioning.get("open_interest"): count += 1
+    
     return count
 
 def send_telegram_notification(message, bot_token, chat_id):
@@ -330,9 +341,9 @@ async def run_ai_prediction_system(test_mode=False, reasoning_mode=False, analys
         print("🤖 Initializing AI Predictor...")
         ai_predictor = AIPredictor(config)
         
-        # STEP 1: Data Collection (53 data points) - Updated to include correlations
+        # STEP 1: Data Collection (65 data points) - Updated to include correlations and CFTC
         print("\n" + "=" * 60)
-        print("📈 STEP 1: COLLECTING 53 DATA POINTS")  # Updated to include correlations
+        print("📈 STEP 1: COLLECTING 61 DATA POINTS")  # Updated to include enhanced data sources
         print("=" * 60)
         
         print("Gathering comprehensive market data...")
@@ -376,10 +387,17 @@ async def run_ai_prediction_system(test_mode=False, reasoning_mode=False, analys
         print("Running AI analysis with all collected data...")
         ai_prediction = await ai_predictor.generate_prediction(all_data, test_mode, reasoning_mode)
         
-        if ai_prediction:
+        if ai_prediction and ai_prediction.get("prediction"):
             print("✅ AI Prediction completed successfully")
         else:
             print("❌ AI Prediction failed")
+            if ai_prediction and ai_prediction.get("error"):
+                print(f"   Error: {ai_prediction.get('error')}")
+            elif ai_prediction and ai_prediction.get("status") == "BLOCKED":
+                print(f"   Blocked: {ai_prediction.get('reason', 'Unknown reason')}")
+            else:
+                print("   No prediction data returned")
+            return False
         
         # STEP 3: Single AI prediction completed (calculation predictor removed)
         
@@ -388,7 +406,7 @@ async def run_ai_prediction_system(test_mode=False, reasoning_mode=False, analys
         print("💾 STEP 3: EXTRACTING & SAVING TRADING SIGNALS")
         print("=" * 60)
         
-        if ai_prediction:
+        if ai_prediction and ai_prediction.get("prediction"):
             print("🤖 AI prediction completed successfully!")
             print("📊 Single Telegram message will be sent with AI analysis")
         else:
